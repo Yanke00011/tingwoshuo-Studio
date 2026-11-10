@@ -13,6 +13,9 @@ GITHUB_OWNER = "Yanke00011"
 GITHUB_REPO = "tingwoshuo.github.io"
 GITHUB_BASE_BRANCH = "main"
 
+[secrets]
+required = ["ACCESS_ALLOWED_EMAIL", "GITHUB_APP_ID", "GITHUB_INSTALLATION_ID", "GITHUB_PRIVATE_KEY"]
+
 [assets]
 directory = "./dist"
 binding = "ASSETS"

@@ -1,6 +1,6 @@
 # Studio 部署与 Cloudflare 配置
 
-Cloudflare CLI 已登录。`tingwoshuo-studio-production`（APAC）D1 已创建并完成 `0001_initial.sql` 迁移；R2 已开通，bucket `tingwoshuo-studio-private` 已绑定。Worker 已部署到 `https://tingwoshuo-studio.zhangyanke1010.workers.dev`，并启用了 Worker Access；team/AUD 与 `ACCESS_ALLOWED_EMAIL` Secret 已配置。未登录访问会跳转 Cloudflare Access 登录。GitHub App Secrets 尚未配置，因此同步 GitHub 仓库与创建 PR 暂不可用。不要把密钥写入 Git。
+Cloudflare CLI 已登录。`tingwoshuo-studio-production`（APAC）D1 已创建并迁移，R2 bucket `tingwoshuo-studio-private` 已绑定。Worker Access、team/AUD 与 `ACCESS_ALLOWED_EMAIL` 已配置，未登录访问会跳转 Access 登录。GitHub App 已安装到 `Yanke00011/tingwoshuo.github.io`；App ID、Installation ID 与 PKCS#8 私钥已存入 Worker Secrets。只读验证了安装令牌、仓库内容读取和 PR 列表读取；未创建测试 PR。不要把密钥写入 Git。
 
 ## 0. 费用与配额（2026-11-10 检查）
 
@@ -23,7 +23,6 @@ Cloudflare CLI 已登录。`tingwoshuo-studio-production`（APAC）D1 已创建�
 Access 是部署后保护 `workers.dev` Worker 的配置；官方支持 Worker 级别保护，会覆盖该 Worker 的 `workers.dev` URL 和预览地址。不要只依赖应用内 JWT 校验来代替边缘 Access 门禁。[Cloudflare Access for Workers](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
 
 如需 preview，分别新建 preview Access policy、D1 和私有 R2 bucket；不要复用生产数据。
-如需 preview，分别新建 preview Access hostname、D1 和私有 R2 bucket；不要复用生产数据。
 
 ## 2. Cloudflare 配置文件和密钥
 
@@ -33,7 +32,7 @@ Access 是部署后保护 `workers.dev` Worker 的配置；官方支持 Worker �
 cp wrangler.production.example.toml wrangler.toml
 ```
 
-填写真实 D1 `database_id`、R2 `bucket_name`、Access team name 和 AUD。保留 `ENVIRONMENT = "production"`。`wrangler.toml` 已被 `.gitignore` 忽略，不要强制加入版本库。当前工作目录已包含一份本机忽略的 `wrangler.toml`，D1 ID 与私有 R2 bucket 名称已填好；在 Worker Access 建立后填写真实 team/AUD。
+填写真实 D1 `database_id`、R2 `bucket_name`、Access team name 和 AUD。保留 `ENVIRONMENT = "production"`。`wrangler.toml` 已被 `.gitignore` 忽略，不要强制加入版本库。当前工作目录已包含一份本机忽略的 `wrangler.toml`，D1 ID 与私有 R2 bucket 名称已填好；当前配置已填入真实 team/AUD。
 
 应用 Access 认证邮箱及 GitHub App 私钥用 Worker Secrets 保存：
 
@@ -41,14 +40,14 @@ cp wrangler.production.example.toml wrangler.toml
 pnpm exec wrangler secret put ACCESS_ALLOWED_EMAIL --config wrangler.toml
 pnpm exec wrangler secret put GITHUB_APP_ID --config wrangler.toml
 pnpm exec wrangler secret put GITHUB_INSTALLATION_ID --config wrangler.toml
-pnpm exec wrangler secret put GITHUB_PRIVATE_KEY --config wrangler.toml
+openssl pkcs8 -topk8 -nocrypt -in /path/to/github-private-key.pem | pnpm exec wrangler secret put GITHUB_PRIVATE_KEY --config wrangler.toml
 ```
 
-CLI 会交互输入 secret，避免把值写入命令历史。GitHub App ID 和 installation ID 不等同私钥，但本项目仍作为 Worker secret 管理。`ACCESS_TEAM` 和 `ACCESS_AUD` 是 Worker 公开配置，不是身份凭据；Worker 仍会验证 JWT 签名和授权邮箱。
+CLI 会交互输入 App ID、Installation ID 和邮箱。GitHub 下载的 RSA 私钥若为 PKCS#1 格式，使用上面的 OpenSSL 管道转成 PKCS#8 后直接传给 Wrangler；不要把私钥内容写入命令历史、仓库或聊天。App ID 和 Installation ID 虽不等同私钥，本项目仍作为 Worker Secret 管理。`ACCESS_TEAM` 和 `ACCESS_AUD` 是 Worker 公开配置；Worker 会验证 JWT 签名、Audience 与授权邮箱。
 
 ## 3. D1 迁移与保护预览
 
-D1 的生产迁移已完成。缺少有效 Access JWT、正确 Access 配置或 allowlist 时，Worker 始终返回 401；首次部署即使暂未启用边缘 Access，也不会公开静态文件。完成 Access Worker 级保护和 GitHub App Secrets 后再进行最终部署与验证。
+D1 的生产迁移已完成。缺少有效 Access JWT、正确 Access 配置或 allowlist 时，Worker 始终返回 401；首次部署即使暂未启用边缘 Access，也不会公开静态文件。完成 Access Worker 级保护和 GitHub App Secrets 后进行部署与验证。
 
 ```sh
 pnpm typecheck
@@ -71,7 +70,7 @@ Preview 用 `wrangler.preview.example.toml` 复制成 `wrangler.preview.toml` �
 - Webhook：不配置 callback/webhook（本版不使用 Webhook）。
 - Repository permissions：**Contents: Read and write**、**Pull requests: Read and write**、**Metadata: Read-only**。
 - 安装范围：Only select repositories，选择 `Yanke00011/tingwoshuo.github.io`。
-- 生成 private key 并安全保存；私钥内容只输入 `wrangler secret put GITHUB_PRIVATE_KEY`。
+- 生成 private key 并安全保存；按上面的 PKCS#8 管道将其传给 Wrangler，不要把私钥放进仓库。
 - 从 App 设置复制 App ID；安装到仓库后从安装页面 URL 记录 installation ID。只向 Worker 设置这两个 ID。
 
 发布接口只生成指定文章和本次引用的私有图片文件，建立分支并开 PR。它不会合并 PR，不会提交其他仓库文件。GitHub Pages/Cloudflare Pages 的生产部署仍由合并到默认分支触发。
