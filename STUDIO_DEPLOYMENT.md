@@ -26,9 +26,11 @@ Access 是部署后保护 `workers.dev` Worker 的配置；官方支持 Worker �
 
 ## 2. Cloudflare 配置文件和密钥
 
-本项目生产部署使用仓库中的 `wrangler.jsonc`。它包含非敏感的 Worker 名称、Access AUD 和资源标识；Access 授权邮箱与 GitHub App 私钥等凭据必须保存在 Worker Secrets，不要写入仓库。Workers Builds 需要仓库里的 Wrangler 配置，才能把 `src/worker.ts`、静态资源以及 D1/R2 绑定一起部署；若配置只存在于本机忽略的 `wrangler.toml`，GitHub 构建会退化为只部署 `dist` 静态文件。
+本项目生产部署使用仓库中的 `wrangler.jsonc`。它包含非敏感的 Worker 名称、Access AUD 和资源标识；Access 授权邮箱与 GitHub App 私钥等凭据必须保存在 Worker Runtime Secrets，不要写入仓库。Workers Builds 需要仓库里的 Wrangler 配置，才能把 `src/worker.ts`、静态资源以及 D1/R2 绑定一起部署；若配置只存在于本机忽略的 `wrangler.toml`，GitHub 构建会退化为只部署 `dist` 静态文件。
 
-应用 Access 认证邮箱及 GitHub App 私钥用 Worker Secrets 保存：
+首次从静态资源版本恢复为脚本 Worker 时，先让 GitHub Build 部署 `wrangler.jsonc` 中的 Worker 入口和绑定；该次构建前不要声明 `secrets.required`，否则 Wrangler 会在 Runtime Secrets 尚不可配置时阻止首次部署。应用在所需 Secret 未配置时会 fail closed，返回 401。Worker 脚本部署成功后，再到 Workers & Pages → `tingwoshuo-studio` → Settings → Variables and Secrets 将凭据添加为 Runtime Secret。不要把它们填进 Workers Builds 的构建变量；构建变量只在构建期间可用。
+
+应用 Access 认证邮箱及 GitHub App 凭据用 Worker Runtime Secrets 保存。以下 CLI 命令会立即创建新 Worker 版本并部署；也可在 Worker 已成为脚本 Worker 后通过 Dashboard 添加：
 
 ```sh
 pnpm exec wrangler secret put ACCESS_ALLOWED_EMAIL --config wrangler.jsonc
