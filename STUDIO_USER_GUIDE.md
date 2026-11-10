@@ -28,4 +28,4 @@
 
 ## 备份与恢复
 
-定期导出 D1：`wrangler d1 export tingwoshuo-studio --remote --output ./studio-backup.sql --config wrangler.toml`；R2 可通过 Cloudflare Dashboard 的 bucket 下载对象，或使用 S3 兼容工具做完整同步。将 SQL 和对象备份存放在加密的私人位置。恢复前创建新库/桶并先在隔离的 preview Worker 演练，再导入 SQL 和对象；勿把备份提交到 Git。
+定期导出 D1：`wrangler d1 export tingwoshuo-studio-production --remote --output ./studio-backup.sql --config wrangler.jsonc`；R2 可通过 Cloudflare Dashboard 的 bucket 下载对象，或使用 S3 兼容工具做完整同步。将 SQL 和对象备份存放在加密的私人位置。恢复前创建新库/桶并先在隔离的 preview Worker 演练，再导入 SQL 和对象；勿把备份提交到 Git。

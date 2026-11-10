@@ -14,7 +14,7 @@ Cloudflare CLI 已登录。`tingwoshuo-studio-production`（APAC）D1 已创建�
 ## 1. Cloudflare 准备
 
 1. 在 Cloudflare Dashboard → Workers & Pages 设定账户 `workers.dev` 子域名，记下 `<账户子域>`。Worker 名称 `tingwoshuo-studio` 对应地址为 `https://tingwoshuo-studio.<账户子域>.workers.dev`。[Workers.dev 配置](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)
-2. 生产 D1 已创建并迁移：`tingwoshuo-studio-production`，区域提示为 APAC。当前机器的忽略文件 `wrangler.toml` 已写入真实 ID；其他环境请按下面的模板步骤配置。
+2. 生产 D1 已创建并迁移：`tingwoshuo-studio-production`，区域提示为 APAC。仓库根目录的 `wrangler.jsonc` 是生产 Worker 配置，必须提交到 GitHub，供 Workers Builds 部署 Worker 入口、D1 和 R2 绑定。
 3. 在 Dashboard → Storage & databases → R2 → Overview 开通 R2。Cloudflare 会进入 checkout；先检查账户显示的计费条款，再自行确认。启用后创建 Standard 私有 bucket：`tingwoshuo-studio-private`。不要启用公开 Development URL 或自定义域名。[R2 开通步骤](https://developers.cloudflare.com/r2/get-started/)
 4. 首次 fail-closed Worker 已部署，入口为 `https://tingwoshuo-studio.zhangyanke1010.workers.dev`；随后已完成 Worker Access 保护及 JWT 校验配置。未登录访问会被 Cloudflare Access 拦截。
 5. Worker 出现在 Workers & Pages 后，进入 `tingwoshuo-studio` → Access → Protect this Worker behind Access，选择保护生产流量，并只添加一条 Allow 策略：Include → Emails → 你的工作台授权邮箱。不要添加通配邮箱、公共 Bypass 或未经保护的预览流量。保存后在 Manage Cloudflare Access 中读取 Application Audience (AUD) Tag 与 Zero Trust team name。[Worker Access 设置](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
@@ -26,21 +26,15 @@ Access 是部署后保护 `workers.dev` Worker 的配置；官方支持 Worker �
 
 ## 2. Cloudflare 配置文件和密钥
 
-首次配置时可复制模板：
-
-```sh
-cp wrangler.production.example.toml wrangler.toml
-```
-
-填写真实 D1 `database_id`、R2 `bucket_name`、Access team name 和 AUD。保留 `ENVIRONMENT = "production"`。`wrangler.toml` 已被 `.gitignore` 忽略，不要强制加入版本库。当前工作目录已包含一份本机忽略的 `wrangler.toml`，D1 ID 与私有 R2 bucket 名称已填好；当前配置已填入真实 team/AUD。
+本项目生产部署使用仓库中的 `wrangler.jsonc`。它包含非敏感的 Worker 名称、Access AUD 和资源标识；Access 授权邮箱与 GitHub App 私钥等凭据必须保存在 Worker Secrets，不要写入仓库。Workers Builds 需要仓库里的 Wrangler 配置，才能把 `src/worker.ts`、静态资源以及 D1/R2 绑定一起部署；若配置只存在于本机忽略的 `wrangler.toml`，GitHub 构建会退化为只部署 `dist` 静态文件。
 
 应用 Access 认证邮箱及 GitHub App 私钥用 Worker Secrets 保存：
 
 ```sh
-pnpm exec wrangler secret put ACCESS_ALLOWED_EMAIL --config wrangler.toml
-pnpm exec wrangler secret put GITHUB_APP_ID --config wrangler.toml
-pnpm exec wrangler secret put GITHUB_INSTALLATION_ID --config wrangler.toml
-openssl pkcs8 -topk8 -nocrypt -in /path/to/github-private-key.pem | pnpm exec wrangler secret put GITHUB_PRIVATE_KEY --config wrangler.toml
+pnpm exec wrangler secret put ACCESS_ALLOWED_EMAIL --config wrangler.jsonc
+pnpm exec wrangler secret put GITHUB_APP_ID --config wrangler.jsonc
+pnpm exec wrangler secret put GITHUB_INSTALLATION_ID --config wrangler.jsonc
+openssl pkcs8 -topk8 -nocrypt -in /path/to/github-private-key.pem | pnpm exec wrangler secret put GITHUB_PRIVATE_KEY --config wrangler.jsonc
 ```
 
 CLI 会交互输入 App ID、Installation ID 和邮箱。GitHub 下载的 RSA 私钥若为 PKCS#1 格式，使用上面的 OpenSSL 管道转成 PKCS#8 后直接传给 Wrangler；不要把私钥内容写入命令历史、仓库或聊天。App ID 和 Installation ID 虽不等同私钥，本项目仍作为 Worker Secret 管理。`ACCESS_TEAM` 和 `ACCESS_AUD` 是 Worker 公开配置；Worker 会验证 JWT 签名、Audience 与授权邮箱。
@@ -53,7 +47,7 @@ D1 的生产迁移已完成。缺少有效 Access JWT、正确 Access 配置或 
 pnpm typecheck
 pnpm test
 pnpm build
-pnpm exec wrangler d1 migrations apply tingwoshuo-studio-production --remote --config wrangler.toml
+pnpm exec wrangler d1 migrations apply tingwoshuo-studio-production --remote --config wrangler.jsonc
 pnpm run deploy
 ```
 
@@ -80,7 +74,7 @@ Preview 用 `wrangler.preview.example.toml` 复制成 `wrangler.preview.toml` �
 D1 备份：
 
 ```sh
-pnpm exec wrangler d1 export tingwoshuo-studio-production --remote --output ./studio-backup.sql --config wrangler.toml
+pnpm exec wrangler d1 export tingwoshuo-studio-production --remote --output ./studio-backup.sql --config wrangler.jsonc
 ```
 
 使用 R2 S3-compatible endpoint 的具备权限凭据工具，将 `tingwoshuo-studio-private` 对象同步到加密备份位置；不要把 S3 secret 写进仓库或 shell history。Studio bucket 是私有对象存储。

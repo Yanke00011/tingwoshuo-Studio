@@ -8,7 +8,7 @@
     "build": "pnpm typecheck && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
-    "deploy": "pnpm build && wrangler deploy --config wrangler.toml",
+    "deploy": "pnpm build && wrangler deploy --config wrangler.jsonc",
     "db:local:migrate": "wrangler d1 migrations apply tingwoshuo-studio-local --local --config wrangler.dev.toml",
     "deploy:preview": "pnpm build && wrangler deploy --config wrangler.preview.toml"
   },
