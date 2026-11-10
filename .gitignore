@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+wrangler.toml
+wrangler.preview.toml
+*.log
+.DS_Store

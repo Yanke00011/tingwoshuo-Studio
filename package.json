@@ -1,0 +1,51 @@
+{
+  "name": "tingwoshuo-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm build && concurrently -k \"wrangler dev --config wrangler.dev.toml --port 8787\" \"vite --host 127.0.0.1\"",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.worker.json",
+    "test": "vitest run",
+    "deploy": "pnpm build && wrangler deploy --config wrangler.toml",
+    "db:local:migrate": "wrangler d1 migrations apply tingwoshuo-studio-local --local --config wrangler.dev.toml",
+    "deploy:preview": "pnpm build && wrangler deploy --config wrangler.preview.toml"
+  },
+  "dependencies": {
+    "@tiptap/core": "^3.33.0",
+    "@tiptap/extension-image": "^3.33.0",
+    "@tiptap/extension-link": "^3.33.0",
+    "@tiptap/extension-table": "^3.33.0",
+    "@tiptap/extension-table-cell": "^3.33.0",
+    "@tiptap/extension-table-header": "^3.33.0",
+    "@tiptap/extension-table-row": "^3.33.0",
+    "@tiptap/extension-task-item": "^3.33.0",
+    "@tiptap/extension-task-list": "^3.33.0",
+    "@tiptap/extension-text-style": "^3.33.0",
+    "@tiptap/markdown": "^3.33.0",
+    "@tiptap/react": "^3.33.0",
+    "@tiptap/starter-kit": "^3.33.0",
+    "jose": "^6.1.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "@tiptap/extension-highlight": "^3.33.0",
+    "@tiptap/extension-underline": "^3.33.0",
+    "lucide-react": "^0.468.0",
+    "@tiptap/extension-color": "^3.33.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261110.1",
+    "@tailwindcss/vite": "^4.1.11",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "tailwindcss": "^4.1.11",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.0",
+    "yaml": "^2.8.0",
+    "wrangler": "^4.34.0",
+    "concurrently": "^9.2.0"
+  }
+}
