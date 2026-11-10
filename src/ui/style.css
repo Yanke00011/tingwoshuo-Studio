@@ -16,3 +16,38 @@
 .article-row{background:var(--panel)}.article-open:focus-visible,.row-delete:focus-visible{outline-offset:1px}
 @media(max-width:760px){.article-row{padding:5px 6px 5px 10px;gap:4px}.article-open{gap:8px}.row-delete{width:31px;height:31px}}
 @media(prefers-color-scheme:dark){.row-delete{color:#e3a79b}.row-delete:hover{background:#49322f;border-color:#67443d;color:#ffd2c7}.eyebrow,.studio-brand small,.side-label,.nav-count,.shortcut,.stat-card small,.row-main small,.article-row time,.row-arrow,.edited-label,.meta-summary,.properties label small,.version-row small{color:#aeb6ac}.summary-input{color:#c4cbc2}.title-input::placeholder,.summary-input::placeholder{color:#858d84}.row-status.published{color:#c6dfca}.notice{color:#e2ce9e}.publish-summary span{color:#bac2b8}}
+
+@media(prefers-color-scheme:light){
+ :root{--muted:#4f584f;--line:#cbd2ca;--wash:#e9eee8;--green:#315e40;--green-dark:#244b31}
+ .eyebrow,.studio-brand small,.side-label,.nav-count,.shortcut,.stat-card small,.row-main small,.article-row time,.row-arrow,.edited-label,.meta-summary,.properties label small,.version-row small,.drawer-row small{color:#535e54}
+ .eyebrow{font-size:10px}.nav-item,.crumb,.properties label{color:#485249}.nav-item:hover,.nav-item.selected{background:#e1eae1;color:#234c30}
+ .list-search{background:#e5eae4;color:#48544a}.list-search input{color:#26342a}.list-search input::placeholder{color:#59645a}
+ .row-status{background:#ecefea;color:#4b554c}.row-status.published{background:#e1ece2;color:#2d5638}.row-delete{color:#8b3835}.row-delete:hover{background:#f5e3e1;border-color:#dbb9b3;color:#702b28}
+ .section-chip{background:#f2e7d7;color:#68481f}.section-chip.tech{background:#e1ebe2;color:#315b3a}.select-trigger,.tool-btn,.editor-toolbar select{color:#4c574d}
+ .mode-switch{background:#e4e8e2}.mode-switch button{color:#505b51}.mode-switch button.active{background:#fff;color:#26382a}
+ .title-input::placeholder,.summary-input::placeholder{color:#667168}.summary-input{color:#424b43}.meta-summary,.edited-label{color:#566057}
+ .editor-placeholder{color:#6c756c}.editor-placeholder small{color:#626c62}.properties input:not([type=checkbox]),.properties textarea{color:#303930}.properties input::placeholder,.properties textarea::placeholder{color:#636d64}.properties label small{font-size:10px}
+ .row-delete:focus-visible,button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline-color:#356845}
+ .auth-retry{margin-top:8px}
+}
+@media(prefers-color-scheme:dark){
+ :root{--muted:#c0c8bf;--line:#3d463d;--wash:#303a31}
+ .eyebrow,.studio-brand small,.side-label,.nav-count,.shortcut,.stat-card small,.row-main small,.article-row time,.row-arrow,.edited-label,.meta-summary,.properties label small,.version-row small,.drawer-row small{color:#b2bcb1}
+ .nav-item,.crumb,.properties label,.tool-btn,.editor-toolbar select{color:#c0c8bf}.nav-item:hover,.nav-item.selected{background:#304033;color:#e0eee1}
+ .list-search{background:#303730;color:#c2ccc1}.list-search input{color:#edf2eb}.list-search input::placeholder{color:#abb5aa}
+ .row-status{background:#303730;color:#d3dbd1}.row-status.published{background:#2e4232;color:#d1e7d2}.row-delete{color:#efaaa0}.row-delete:hover{background:#4b302d;border-color:#754843;color:#ffd4ce}
+ .section-chip{background:#443a2b;color:#e6c596}.section-chip.tech{background:#2e4131;color:#c4e0c7}.mode-switch{background:#323832}.mode-switch button{color:#c2cbc1}.mode-switch button.active{background:#4a554b;color:#fff}
+ .title-input::placeholder,.summary-input::placeholder,.editor-placeholder,.editor-placeholder small{color:#9aa49a}.summary-input,.meta-summary,.edited-label{color:#c0c8bf}.properties input:not([type=checkbox]),.properties textarea{color:#e4ebe2}.properties input::placeholder,.properties textarea::placeholder{color:#aab5aa}
+ .auth-retry{margin-top:8px}
+}
+
+/* Keep the mobile article drawer on one coherent surface in dark mode. */
+@media(prefers-color-scheme:dark){
+ .library-drawer{background:#202420;color:#e7ebe5;border-right:1px solid #3d463d}
+ .library-drawer .library-head h2{color:#f1f4ef}
+ .library-drawer .icon-btn{color:#d0d8cf}
+ .library-drawer .new-article{background:#315e40;color:#fff}
+ .library-drawer .new-article:hover{background:#244b31;color:#fff}
+ .library-drawer .drawer-row{background:#292f29;color:#e5ebe4;border-color:#414a41}
+ .library-drawer .drawer-row small{color:#b8c1b7}
+}
