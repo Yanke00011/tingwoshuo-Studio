@@ -25,14 +25,13 @@ interface Env extends GitHubEnv {
 
 const json = (data: unknown, status = 200, headers: HeadersInit = {}) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', ...headers } });
 const idPattern = /^[a-zA-Z0-9_-]{8,80}$/;
-const allowedSection = new Set(['life', 'tech']);
 
 function requireDb(env: Env): D1Database { if (!env.DB) throw new Error('D1 binding DB is not configured'); return env.DB; }
 async function consumeRate(env: Env, user: string, path: string) {
   const db = requireDb(env); const now = Date.now(); const hour = Math.floor(now / 3_600_000) * 3_600_000;
   const isUpload = path === '/api/media'; const isPublish = path === '/api/publish'; const limit = isUpload ? 60 : isPublish ? 5 : 240;
   const key = `${user.toLowerCase()}:${isUpload ? 'upload' : isPublish ? 'publish' : 'write'}`;
-  const row = await db.prepare('INSERT INTO rate_limits(identity, window_start, count) VALUES (?, ?, 1) ON CONFLICT(identity) DO UPDATE SET count = CASE WHEN window_start < ? THEN 1 ELSE count + 1 END, window_start = CASE WHEN window_start < ? THEN ? ELSE window_start END RETURNING count').bind(key, hour, hour, hour, hour).first<{count:number}>();
+  const row: any = await db.prepare('INSERT INTO rate_limits(identity, window_start, count) VALUES (?, ?, 1) ON CONFLICT(identity) DO UPDATE SET count = CASE WHEN window_start < ? THEN 1 ELSE count + 1 END, window_start = CASE WHEN window_start < ? THEN ? ELSE window_start END RETURNING count').bind(key, hour, hour, hour, hour).first();
   if ((row?.count || 0) > limit) { const error = new Error('Too many requests. Please wait before trying again.') as Error & {status:number}; error.status = 429; throw error; }
 }
 function requireR2(env: Env): R2Bucket { if (!env.PRIVATE_MEDIA) throw new Error('R2 binding PRIVATE_MEDIA is not configured'); return env.PRIVATE_MEDIA; }
@@ -89,6 +88,12 @@ async function privateMedia(request: Request, env: Env, url: URL) {
     const { results } = await requireDb(env).prepare('SELECT key, alt, caption, created_at FROM media ORDER BY created_at DESC LIMIT 500').all();
     return json(results);
   }
+  if (request.method === 'PATCH') {
+    const input = await readJson(request, 12_000); const key = String(input.key || '');
+    if (!/^private\/[a-f0-9-]{36}\.webp$/.test(key) || typeof input.alt !== 'string' || input.alt.length > 300 || typeof input.caption !== 'string' || input.caption.length > 500) return json({ error: 'Invalid media metadata' }, 400);
+    await requireDb(env).prepare('UPDATE media SET alt = ?, caption = ? WHERE key = ?').bind(input.alt, input.caption, key).run();
+    return json({ key, alt: input.alt, caption: input.caption });
+  }
   if (request.method === 'DELETE') {
     const key = url.searchParams.get('key') || '';
     if (!/^private\/[a-f0-9-]{36}\.webp$/.test(key)) return json({ error: 'Invalid private media key' }, 400);
@@ -99,10 +104,26 @@ async function privateMedia(request: Request, env: Env, url: URL) {
   return json({ error: 'Method not allowed' }, 405);
 }
 
+async function preparePublish(env: Env, draftId: string) {
+  const draft: any = await requireDb(env).prepare('SELECT * FROM drafts WHERE id = ?').bind(draftId).first();
+  if (!draft) throw new Error('Draft not found');
+  const data = JSON.parse(draft.data_json); checkArticle(data);
+  const extension = data.extension === '.mdx' ? '.mdx' : '.md';
+  const path = repoPath(`src/content/${data.section}/${data.slug}${extension}`);
+  const generated = createMarkdown(data);
+  const media = [];
+  for (const key of generated.mediaKeys) {
+    const object = await requireR2(env).get(key);
+    if (!object) throw new Error(`Private image is missing: ${key}`);
+    media.push(`public/images/${key.slice('private/'.length)}`);
+  }
+  return { title: data.title, section: data.section, slug: data.slug, baseBranch: env.GITHUB_BASE_BRANCH, files: [path, ...media], media: generated.mediaKeys };
+}
+
 async function publish(env: Env, draftId: string, user: string, confirm: boolean) {
   if (!confirm) throw new Error('Explicit publish confirmation is required');
   const db = requireDb(env);
-  const draft = await db.prepare('SELECT * FROM drafts WHERE id = ?').bind(draftId).first<any>();
+  const draft: any = await db.prepare('SELECT * FROM drafts WHERE id = ?').bind(draftId).first();
   if (!draft) throw new Error('Draft not found');
   const data = JSON.parse(draft.data_json);
   checkArticle(data);
@@ -154,7 +175,7 @@ async function api(request: Request, env: Env, user: string): Promise<Response> 
   if (path === '/api/drafts' && request.method === 'POST') {
     const input = await readJson(request); checkArticle(input);
     const db = requireDb(env); const id = crypto.randomUUID(); const now = new Date().toISOString();
-    const data = { ...input, mdx: Boolean(input.mdx) }; delete data.doc;
+    const data: Record<string, any> = { ...input, mdx: Boolean(input.mdx) }; delete data.doc;
     await db.batch([
       db.prepare('INSERT INTO drafts (id, revision, status, title, section, slug, data_json, doc_json, github_path, github_sha, updated_at, updated_by) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .bind(id, input.published ? 'published' : 'draft', input.title, input.section, input.slug, JSON.stringify(data), JSON.stringify(input.doc || {}), input.githubPath || null, input.githubSha || null, now, user),
@@ -164,7 +185,7 @@ async function api(request: Request, env: Env, user: string): Promise<Response> 
   }
   const draftMatch = path.match(/^\/api\/drafts\/([a-zA-Z0-9_-]{8,80})$/);
   if (draftMatch && request.method === 'GET') {
-    const row = await requireDb(env).prepare('SELECT id, revision, status, data_json, doc_json, github_path, github_sha, updated_at FROM drafts WHERE id = ?').bind(draftMatch[1]).first<any>();
+    const row: any = await requireDb(env).prepare('SELECT id, revision, status, data_json, doc_json, github_path, github_sha, updated_at FROM drafts WHERE id = ?').bind(draftMatch[1]).first();
     return row ? json({ ...row, data: JSON.parse(row.data_json), doc: JSON.parse(row.doc_json || '{}') }) : json({ error: 'Draft not found' }, 404);
   }
   if (draftMatch && request.method === 'PUT') {
@@ -176,8 +197,8 @@ async function api(request: Request, env: Env, user: string): Promise<Response> 
     const [result] = await db.batch([
       db.prepare('UPDATE drafts SET revision = revision + 1, status = ?, title = ?, section = ?, slug = ?, data_json = ?, doc_json = ?, github_path = COALESCE(?, github_path), github_sha = COALESCE(?, github_sha), updated_at = ?, updated_by = ? WHERE id = ? AND revision = ?')
         .bind(input.published ? 'published' : 'draft', input.title, input.section, input.slug, JSON.stringify(data), JSON.stringify(input.doc || {}), input.githubPath || null, input.githubSha || null, now, user, draftMatch[1], revision),
-      db.prepare('INSERT INTO draft_versions (draft_id, revision, data_json, doc_json, created_at, created_by) SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM drafts WHERE id = ? AND revision = ?)')
-        .bind(draftMatch[1], next, JSON.stringify(data), JSON.stringify(input.doc || {}), now, user, draftMatch[1], next)
+      db.prepare('INSERT INTO draft_versions (draft_id, revision, data_json, doc_json, created_at, created_by) SELECT ?, ?, ?, ?, ?, ? WHERE changes() = 1')
+        .bind(draftMatch[1], next, JSON.stringify(data), JSON.stringify(input.doc || {}), now, user)
     ]) as D1Result[];
     if (result.meta.changes !== 1) return json({ error: 'This draft changed on another device. Reload or restore a version before saving.', conflict: true }, 409);
     return json({ id: draftMatch[1], revision: next, updatedAt: now });
@@ -191,7 +212,7 @@ async function api(request: Request, env: Env, user: string): Promise<Response> 
   }
   const versionMatch = path.match(/^\/api\/drafts\/([a-zA-Z0-9_-]{8,80})\/versions\/(\d+)$/);
   if (versionMatch && request.method === 'GET') {
-    const row = await requireDb(env).prepare('SELECT revision, data_json, doc_json, created_at, created_by FROM draft_versions WHERE draft_id = ? AND revision = ?').bind(versionMatch[1], Number(versionMatch[2])).first<any>();
+    const row: any = await requireDb(env).prepare('SELECT revision, data_json, doc_json, created_at, created_by FROM draft_versions WHERE draft_id = ? AND revision = ?').bind(versionMatch[1], Number(versionMatch[2])).first();
     return row ? json({ ...row, data: JSON.parse(row.data_json), doc: JSON.parse(row.doc_json || '{}') }) : json({ error: 'Version not found' }, 404);
   }
   if (path === '/api/github/posts' && request.method === 'GET') return json(await githubPosts(env));
@@ -200,6 +221,10 @@ async function api(request: Request, env: Env, user: string): Promise<Response> 
     const target = url.searchParams.get('path') || ''; return json(await githubRead(env, target));
   }
   if (path === '/api/media' || path === '/api/media/object') return privateMedia(request, env, url);
+  if (path === '/api/publish/prepare' && request.method === 'GET') {
+    const id = String(url.searchParams.get('draftId') || ''); if (!idPattern.test(id)) return json({ error: 'Invalid draft id' }, 400);
+    return json(await preparePublish(env, id));
+  }
   if (path === '/api/publish' && request.method === 'POST') {
     const input = await readJson(request); if (input.confirmed !== true) return json({ error: 'Explicit publish confirmation is required' }, 400);
     const id = String(input.draftId || ''); if (!idPattern.test(id)) return json({ error: 'Invalid draft id' }, 400);

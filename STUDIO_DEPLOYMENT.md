@@ -1,0 +1,85 @@
+# Studio 部署与 Cloudflare 配置
+
+线上资源不会由本仓库自动创建。本任务没有登录 Cloudflare/GitHub 控制台，也没有创建资源、部署、开通订阅或保存凭据。
+
+## 0. 费用与配额（2026-11-10 检查）
+
+- **Workers Free：** 100,000 次 Worker 调用/日、每次 10 ms CPU；本应用将 `run_worker_first=true` 用于对每个应用静态资源先执行身份校验，因此页面 CSS/JS 也消耗 Worker 调用额度。超出免费额度或需要更高 CPU 时，需检查 Cloudflare 账户当前计费方案。[Workers limits](https://developers.cloudflare.com/workers/platform/limits/)、[Static Assets billing](https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/)
+- **D1 Free：** 每日 500 万 rows read、10 万 rows written，账户 5 GB 总存储、每库最高 500 MB。达到日限后查询会报错直到 UTC 午夜重置。个人写作量通常很低，但保存版本永久增加存储；本项目不自动清理历史。[D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/)、[D1 limits](https://developers.cloudflare.com/d1/platform/limits/)
+- **R2 Standard Free：** 每月 10 GB-month、100 万 Class A、1,000 万 Class B 操作，互联网出站免费；超出按量收费。Cloudflare 首次使用 R2 要在 Dashboard 的 R2 Overview 完成 subscription/checkout 流程。即使使用量在免费额度内，这一步也可能要求添加付款方式；请先检查账户显示的条款再确认。[R2 pricing](https://developers.cloudflare.com/r2/pricing/)、[R2 setup](https://developers.cloudflare.com/r2/get-started/)
+- **Cloudflare Access：** Zero Trust 免费档覆盖至多 50 名用户；此工具只配置一位管理员。当前没有已知需要自定义域名的功能，Access 可按 `workers.dev` hostname 建立自托管应用。[Zero Trust plans](https://www.cloudflare.com/plans/zero-trust-services/)、[Protect a Worker hostname](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
+
+免费额度和计费条件可能随 Cloudflare 政策改变，请创建资源时以账户 Dashboard 的当前提示为准。
+
+## 1. Cloudflare 准备
+
+1. 登录 Cloudflare Dashboard，启用 `workers.dev` 子域名。记下账户子域名，以便构成 `tingwoshuo-studio.<账户子域>.workers.dev`。
+2. 先在 Zero Trust → Access → Applications → Add an application → Self-hosted 创建 Access 应用，hostname 填入以上 Studio hostname。只创建一条 Allow policy：Include → Emails → 你的已验证邮箱。不要加通配邮箱、绕过规则或公共 Bypass。Access 默认阻止未命中 Allow policy 的身份。
+3. 在应用详情记下 **Application Audience (AUD) Tag**，在 Zero Trust Overview 记下 team name。完整 issuer 为 `https://<team-name>.cloudflareaccess.com`。
+4. Workers & Pages → D1 → Create database，名称建议 `tingwoshuo-studio-production`。保存 Dashboard 返回的真实 Database ID。
+5. Storage & databases → R2 → Create bucket，名称建议 `tingwoshuo-studio-private`。只选 Standard bucket；不要启用公开 Development URL 或自定义域名。完成 R2 要求的订阅步骤前先核对计费页面。
+
+如需 preview，分别新建 preview Access hostname、D1 和私有 R2 bucket；不要复用生产数据。
+
+## 2. Cloudflare 配置文件和密钥
+
+在项目目录复制模板：
+
+```sh
+cp wrangler.production.example.toml wrangler.toml
+```
+
+编辑 `wrangler.toml`：填写真实 D1 `database_id`、R2 `bucket_name`、Access team name 和 AUD。保留 `ENVIRONMENT = "production"`。文件已被 `.gitignore` 忽略，不要强制加入版本库。
+
+应用 Access 认证邮箱及 GitHub App 私钥用 Worker Secrets 保存：
+
+```sh
+pnpm exec wrangler secret put ACCESS_ALLOWED_EMAIL --config wrangler.toml
+pnpm exec wrangler secret put GITHUB_APP_ID --config wrangler.toml
+pnpm exec wrangler secret put GITHUB_INSTALLATION_ID --config wrangler.toml
+pnpm exec wrangler secret put GITHUB_PRIVATE_KEY --config wrangler.toml
+```
+
+CLI 会交互输入 secret，避免把值写入命令历史。GitHub App ID 和 installation ID 不等同私钥，但本项目仍作为 Worker secret 管理。`ACCESS_TEAM` 和 `ACCESS_AUD` 是 Worker 公开配置，不是身份凭据；Worker 仍会验证 JWT 签名和授权邮箱。
+
+## 3. D1 迁移与保护预览
+
+先完成生产迁移，然后部署 Worker。Worker 在缺少有效 Access JWT、Access 配置或 allowlist 时始终返回 401；首次部署前也不会公开静态文件。
+
+```sh
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm exec wrangler d1 migrations apply tingwoshuo-studio-production --remote --config wrangler.toml
+pnpm deploy
+```
+
+部署后从 Cloudflare 输出复制 `workers.dev` 地址，核对它与 Access 应用 hostname 完全一致。匿名 `curl -I https://<studio-host>/` 应先被 Access 登录拦截；若请求抵达 Worker，应返回 401，而不能收到 Studio HTML。未授权邮箱必须得到 Access 拒绝页。登录后应显示 Studio 工作台。
+
+Preview 用 `wrangler.preview.example.toml` 复制成 `wrangler.preview.toml` 并填入独立资源，命令为 `pnpm deploy:preview`。为 preview hostname 也创建仅含你的邮箱 Allow policy。不得因预览方便关闭 `ENVIRONMENT=production` 或 Access JWT 验证。
+
+## 4. GitHub App
+
+在 GitHub Developer settings → GitHub Apps → New GitHub App 创建专用 App：
+
+- GitHub App name：`TingWoShuo Studio`。
+- Homepage URL：Studio Worker 地址。
+- Webhook：不配置 callback/webhook（本版不使用 Webhook）。
+- Repository permissions：**Contents: Read and write**、**Pull requests: Read and write**、**Metadata: Read-only**。
+- 安装范围：Only select repositories，选择 `Yanke0001/tingwoshuo.github.io`。
+- 生成 private key 并安全保存；私钥内容只输入 `wrangler secret put GITHUB_PRIVATE_KEY`。
+- 从 App 设置复制 App ID；安装到仓库后从安装页面 URL 记录 installation ID。只向 Worker 设置这两个 ID。
+
+发布接口只生成指定文章和本次引用的私有图片文件，建立分支并开 PR。它不会合并 PR，不会提交其他仓库文件。GitHub Pages/Cloudflare Pages 的生产部署仍由合并到默认分支触发。
+
+## 5. 备份
+
+D1 备份：
+
+```sh
+pnpm exec wrangler d1 export tingwoshuo-studio-production --remote --output ./studio-backup.sql --config wrangler.toml
+```
+
+使用 R2 S3-compatible endpoint 的具备权限凭据工具，将 `tingwoshuo-studio-private` 对象同步到加密备份位置；不要把 S3 secret 写进仓库或 shell history。Studio bucket 是私有对象存储。
+
+恢复时创建隔离 D1/R2，导入 SQL 和对象，验证 Worker 权限与媒体引用，再切换 preview。生产恢复前保留原数据库/桶的只读备份；不要在未确认目标环境时覆盖生产资源。
