@@ -6,7 +6,7 @@ workers_dev = true
 [vars]
 ENVIRONMENT = "development"
 LOCAL_DEV_EMAIL = "you@local.invalid"
-GITHUB_OWNER = "Yanke0001"
+GITHUB_OWNER = "Yanke00011"
 GITHUB_REPO = "tingwoshuo.github.io"
 GITHUB_BASE_BRANCH = "main"
 

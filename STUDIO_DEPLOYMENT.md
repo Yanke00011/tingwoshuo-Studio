@@ -1,6 +1,6 @@
 # Studio 部署与 Cloudflare 配置
 
-Cloudflare CLI 已登录。`tingwoshuo-studio-production`（APAC）D1 已创建并完成 `0001_initial.sql` 迁移；R2 已开通，私有 bucket `tingwoshuo-studio-private` 已存在。首个 fail-closed Worker 已部署到 `https://tingwoshuo-studio.zhangyanke1010.workers.dev`。Worker Access 策略、真实 team/AUD、允许邮箱 Secrets 和 GitHub App 尚未配置；当前应用返回 401，页面和 API 不可用。不要把密钥写入 Git。
+Cloudflare CLI 已登录。`tingwoshuo-studio-production`（APAC）D1 已创建并完成 `0001_initial.sql` 迁移；R2 已开通，bucket `tingwoshuo-studio-private` 已绑定。Worker 已部署到 `https://tingwoshuo-studio.zhangyanke1010.workers.dev`，并启用了 Worker Access；team/AUD 与 `ACCESS_ALLOWED_EMAIL` Secret 已配置。未登录访问会跳转 Cloudflare Access 登录。GitHub App Secrets 尚未配置，因此同步 GitHub 仓库与创建 PR 暂不可用。不要把密钥写入 Git。
 
 ## 0. 费用与配额（2026-11-10 检查）
 
@@ -16,7 +16,7 @@ Cloudflare CLI 已登录。`tingwoshuo-studio-production`（APAC）D1 已创建�
 1. 在 Cloudflare Dashboard → Workers & Pages 设定账户 `workers.dev` 子域名，记下 `<账户子域>`。Worker 名称 `tingwoshuo-studio` 对应地址为 `https://tingwoshuo-studio.<账户子域>.workers.dev`。[Workers.dev 配置](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)
 2. 生产 D1 已创建并迁移：`tingwoshuo-studio-production`，区域提示为 APAC。当前机器的忽略文件 `wrangler.toml` 已写入真实 ID；其他环境请按下面的模板步骤配置。
 3. 在 Dashboard → Storage & databases → R2 → Overview 开通 R2。Cloudflare 会进入 checkout；先检查账户显示的计费条款，再自行确认。启用后创建 Standard 私有 bucket：`tingwoshuo-studio-private`。不要启用公开 Development URL 或自定义域名。[R2 开通步骤](https://developers.cloudflare.com/r2/get-started/)
-4. 首次 fail-closed Worker 部署已完成，入口为 `https://tingwoshuo-studio.zhangyanke1010.workers.dev`。当前因缺少真实 Access 配置与 allowlist，静态文件和 API 都返回 401，不提供 Studio 页面内容。
+4. 首次 fail-closed Worker 已部署，入口为 `https://tingwoshuo-studio.zhangyanke1010.workers.dev`；随后已完成 Worker Access 保护及 JWT 校验配置。未登录访问会被 Cloudflare Access 拦截。
 5. Worker 出现在 Workers & Pages 后，进入 `tingwoshuo-studio` → Access → Protect this Worker behind Access，选择保护生产流量，并只添加一条 Allow 策略：Include → Emails → 你的工作台授权邮箱。不要添加通配邮箱、公共 Bypass 或未经保护的预览流量。保存后在 Manage Cloudflare Access 中读取 Application Audience (AUD) Tag 与 Zero Trust team name。[Worker Access 设置](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
 6. 将 `<team-name>` 和真实 AUD 填入 Worker 的 `ACCESS_TEAM`、`ACCESS_AUD`；通过 Cloudflare Secrets 设置 `ACCESS_ALLOWED_EMAIL`，并确保其邮箱与 Access Allow 策略完全一致。再部署一次并验证登录、未授权邮箱拒绝和匿名请求拒绝。
 
@@ -70,7 +70,7 @@ Preview 用 `wrangler.preview.example.toml` 复制成 `wrangler.preview.toml` �
 - Homepage URL：Studio Worker 地址。
 - Webhook：不配置 callback/webhook（本版不使用 Webhook）。
 - Repository permissions：**Contents: Read and write**、**Pull requests: Read and write**、**Metadata: Read-only**。
-- 安装范围：Only select repositories，选择 `Yanke0001/tingwoshuo.github.io`。
+- 安装范围：Only select repositories，选择 `Yanke00011/tingwoshuo.github.io`。
 - 生成 private key 并安全保存；私钥内容只输入 `wrangler secret put GITHUB_PRIVATE_KEY`。
 - 从 App 设置复制 App ID；安装到仓库后从安装页面 URL 记录 installation ID。只向 Worker 设置这两个 ID。
 
