@@ -25,11 +25,11 @@ wrangler*.toml     本地配置和生产/预览模板
 
 ## 图片发布
 
-图片在浏览器画布中缩放并重新编码 WebP，再写入私有 R2。正式 Markdown 只在用户确认后写入 GitHub PR；被正文引用的私有 key 在同一次 Git Tree 中映射成 `public/images/<uuid>.webp`，文章内链接转换为博客 `/images/<uuid>.webp`。Studio API 不提供任何公开 R2 URL。
+图片在浏览器画布中缩放并重新编码 WebP，再写入私有 R2。正式 Markdown 只在用户确认后直接提交到 GitHub 默认分支；被正文引用的私有 key 在同一次 Git Tree 中映射成 `public/images/<uuid>.webp`，文章内链接转换为博客 `/images/<uuid>.webp`。Studio API 不提供任何公开 R2 URL。
 
 ## 发布事务
 
-Worker 创建短期 GitHub App installation token，读取 `main` 最新提交、验证原文章 blob SHA、准备仅含目标文章和引用图片的 Git tree、提交到新分支并创建 Pull Request。不会直接修改博客默认分支，也不会自动合并。PR 合并和 Pages 部署仍由 GitHub/Cloudflare 执行。当前不显示伪造的“已上线”状态；Cloudflare 部署状态尚未接入 API。
+Worker 创建短期 GitHub App installation token，读取默认分支最新提交、验证原文章 blob SHA、准备仅含目标文章和引用图片的 Git tree，并创建一个以当前分支为父级的提交，再用 `force: false` 快进更新默认分支 ref；不创建发布分支或 Pull Request。若默认分支在准备期间前进，GitHub 会拒绝更新，Studio 要求重新预览。Cloudflare Pages 由默认分支提交触发；当前不跟踪构建结果。
 
 ## 共享内容模型
 

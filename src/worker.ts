@@ -145,19 +145,29 @@ async function publish(env: Env, draftId: string, user: string, confirm: boolean
     const bytes = new Uint8Array(await new Response(image.body).arrayBuffer());
     let binary = '';
     for (let offset = 0; offset < bytes.length; offset += 8192) binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
-    treeEntries.push({ path: `public/images/${key.slice('private/'.length)}`, mode: '100644', type: 'blob', content: btoa(binary) });
+    const blobResponse = await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/git/blobs`, { method: 'POST', body: JSON.stringify({ content: btoa(binary), encoding: 'base64' }) });
+    const blob = await blobResponse.json() as { sha: string };
+    treeEntries.push({ path: `public/images/${key.slice('private/'.length)}`, mode: '100644', type: 'blob', sha: blob.sha });
   }
   const treeResponse = await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/git/trees`, { method: 'POST', body: JSON.stringify({ base_tree: baseSha, tree: treeEntries }) });
-  const tree = await treeResponse.json() as any;
+  const tree = await treeResponse.json() as { sha: string; tree?: Array<{ path: string; sha: string; type: string }> };
   const commitResponse = await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/git/commits`, { method: 'POST', body: JSON.stringify({ message: `Studio: ${data.title}`, tree: tree.sha, parents: [baseSha] }) });
   const commit = await commitResponse.json() as any;
-  const branch = `studio/${data.section}-${data.slug}-${crypto.randomUUID().slice(0, 8)}`;
-  await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/git/refs`, { method: 'POST', body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: commit.sha }) });
-  const prResponse = await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/pulls`, { method: 'POST', body: JSON.stringify({ title: `发布文章：${data.title}`, head: branch, base, body: `由 TingWoShuo Studio 为 ${user} 创建。\n\n目标文件：\`${path}\`\n\n合并后由 Cloudflare Pages 自动构建。` }) });
-  const pr = await prResponse.json() as any;
+  const articleBlobSha = tree.tree?.find((entry) => entry.path === path)?.sha;
+  if (!articleBlobSha) throw new Error('GitHub did not return the published article blob SHA');
+  try {
+    await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/git/refs/heads/${encodeURIComponent(base)}`, { method: 'PATCH', body: JSON.stringify({ sha: commit.sha, force: false }) });
+  } catch (error) {
+    if (error instanceof Error && /GitHub API returned (409|422)/.test(error.message)) throw new Error('博客主分支刚刚有新提交，Studio 未覆盖任何内容。请重新打开发布预览后再试。');
+    throw error;
+  }
   const now = new Date().toISOString();
-  await db.prepare('INSERT INTO publish_jobs (id, draft_id, status, github_branch, github_commit, pull_request_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(crypto.randomUUID(), draftId, 'pr-open', branch, commit.sha, pr.html_url, now, now).run();
-  return { status: 'pr-open', branch, commit: commit.sha, pullRequest: pr.html_url, target: path };
+  const publishedData = { ...data, published: true, githubPath: path, githubSha: articleBlobSha };
+  await db.batch([
+    db.prepare('UPDATE drafts SET status = ?, github_path = ?, github_sha = ?, data_json = ?, updated_at = ?, updated_by = ? WHERE id = ?').bind('published', path, articleBlobSha, JSON.stringify(publishedData), now, user, draftId),
+    db.prepare('INSERT INTO publish_jobs (id, draft_id, status, github_branch, github_commit, pull_request_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(crypto.randomUUID(), draftId, 'merged', base, commit.sha, '', now, now)
+  ]);
+  return { status: 'pushed', branch: base, commit: commit.sha, commitUrl: `https://github.com/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/commit/${commit.sha}`, target: path, revision: draft.revision, updatedAt: now, githubPath: path, githubSha: articleBlobSha };
 }
 
 async function api(request: Request, env: Env, user: string): Promise<Response> {
@@ -204,7 +214,12 @@ async function api(request: Request, env: Env, user: string): Promise<Response> 
     return json({ id: draftMatch[1], revision: next, updatedAt: now });
   }
   if (draftMatch && request.method === 'DELETE') {
-    const db = requireDb(env); await db.prepare('DELETE FROM drafts WHERE id = ?').bind(draftMatch[1]).run(); return json({ deleted: true });
+    const db = requireDb(env);
+    await db.batch([
+      db.prepare('DELETE FROM publish_jobs WHERE draft_id = ?').bind(draftMatch[1]),
+      db.prepare('DELETE FROM drafts WHERE id = ?').bind(draftMatch[1])
+    ]);
+    return json({ deleted: true });
   }
   const versionsMatch = path.match(/^\/api\/drafts\/([a-zA-Z0-9_-]{8,80})\/versions$/);
   if (versionsMatch && request.method === 'GET') {

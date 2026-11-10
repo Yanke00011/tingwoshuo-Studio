@@ -1,6 +1,6 @@
 # Studio 部署与 Cloudflare 配置
 
-Cloudflare CLI 已登录。`tingwoshuo-studio-production`（APAC）D1 已创建并迁移，R2 bucket `tingwoshuo-studio-private` 已绑定。Worker Access、team/AUD 与 `ACCESS_ALLOWED_EMAIL` 已配置，未登录访问会跳转 Access 登录。GitHub App 已安装到 `Yanke00011/tingwoshuo.github.io`；App ID、Installation ID 与 PKCS#8 私钥已存入 Worker Secrets。只读验证了安装令牌、仓库内容读取和 PR 列表读取；未创建测试 PR。不要把密钥写入 Git。
+Cloudflare CLI 已登录。`tingwoshuo-studio-production`（APAC）D1 已创建并迁移，R2 bucket `tingwoshuo-studio-private` 已绑定。Worker Access、team/AUD 与 `ACCESS_ALLOWED_EMAIL` 已配置，未登录访问会跳转 Access 登录。GitHub App 已安装到 `Yanke00011/tingwoshuo.github.io`；App ID、Installation ID 与 PKCS#8 私钥已存入 Worker Secrets。只读验证了安装令牌、仓库内容读取和 PR 列表读取；未执行过内容写入。不要把密钥写入 Git。
 
 ## 0. 费用与配额（2026-11-10 检查）
 
@@ -68,12 +68,12 @@ Preview 用 `wrangler.preview.example.toml` 复制成 `wrangler.preview.toml` �
 - GitHub App name：`TingWoShuo Studio`。
 - Homepage URL：Studio Worker 地址。
 - Webhook：不配置 callback/webhook（本版不使用 Webhook）。
-- Repository permissions：**Contents: Read and write**、**Pull requests: Read and write**、**Metadata: Read-only**。
+- Repository permissions：**Contents: Read and write**、**Metadata: Read-only**。
 - 安装范围：Only select repositories，选择 `Yanke00011/tingwoshuo.github.io`。
 - 生成 private key 并安全保存；按上面的 PKCS#8 管道将其传给 Wrangler，不要把私钥放进仓库。
 - 从 App 设置复制 App ID；安装到仓库后从安装页面 URL 记录 installation ID。只向 Worker 设置这两个 ID。
 
-发布接口只生成指定文章和本次引用的私有图片文件，建立分支并开 PR。它不会合并 PR，不会提交其他仓库文件。GitHub Pages/Cloudflare Pages 的生产部署仍由合并到默认分支触发。
+发布接口只生成指定文章和本次引用的私有图片文件，并以不可强推的快进提交直接更新默认分支；它不创建分支或 PR，也不会触碰其他仓库文件。GitHub Pages/Cloudflare Pages 的生产部署由默认分支提交触发。
 
 ## 5. 备份
 

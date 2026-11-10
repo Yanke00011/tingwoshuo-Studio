@@ -1,6 +1,6 @@
 # TingWoShuo Studio
 
-听我说 Studio 是与 Astro 博客分开的私人写作应用，部署在独立的 Cloudflare Worker 上。前端使用 React、Vite、Tailwind CSS 4 和 Tiptap；Worker 同源托管前端、D1 草稿与历史、私有 R2 媒体，以及通过 GitHub App 创建 Pull Request 的发布 API。
+听我说 Studio 是与 Astro 博客分开的私人写作应用，部署在独立的 Cloudflare Worker 上。前端使用 React、Vite、Tailwind CSS 4 和 Tiptap；Worker 同源托管前端、D1 草稿与历史、私有 R2 媒体，以及通过 GitHub App 将文章直接提交到博客主分支的发布 API。
 
 ## 本地开发
 
