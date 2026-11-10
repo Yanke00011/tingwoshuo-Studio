@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm build && concurrently -k \"wrangler dev --config wrangler.dev.toml --port 8787\" \"vite --host 127.0.0.1\"",
+    "dev": "pnpm build && node scripts/dev.mjs",
     "build": "tsc -b && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
@@ -29,10 +29,7 @@
     "jose": "^6.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "@tiptap/extension-highlight": "^3.33.0",
-    "@tiptap/extension-underline": "^3.33.0",
-    "lucide-react": "^0.468.0",
-    "@tiptap/extension-color": "^3.33.0"
+    "@tiptap/extension-underline": "^3.33.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261110.1",
@@ -45,7 +42,6 @@
     "vite": "^7.1.0",
     "vitest": "^3.2.0",
     "yaml": "^2.8.0",
-    "wrangler": "^4.34.0",
-    "concurrently": "^9.2.0"
+    "wrangler": "^4.34.0"
   }
 }

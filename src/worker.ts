@@ -1,6 +1,6 @@
 import { authenticatedEmail, parseCookies, verifyWriteOrigin } from './security';
 import { githubRequest, repoPath, type GitHubEnv } from './github';
-import { stringify as stringifyYaml } from 'yaml';
+import { checkArticle, createMarkdown, safeArticleSlug } from './content';
 
 interface D1Result<T = Record<string, unknown>> { results: T[]; success: boolean; meta: { changes: number }; }
 interface D1Database { prepare(query: string): { bind(...values: unknown[]): any; first<T = Record<string, unknown>>(): Promise<T | null>; all<T = Record<string, unknown>>(): Promise<D1Result<T>>; run<T = unknown>(): Promise<D1Result<T>> }; batch<T = unknown>(statements: unknown[]): Promise<T[]>; }
@@ -36,41 +36,13 @@ async function consumeRate(env: Env, user: string, path: string) {
   if ((row?.count || 0) > limit) { const error = new Error('Too many requests. Please wait before trying again.') as Error & {status:number}; error.status = 429; throw error; }
 }
 function requireR2(env: Env): R2Bucket { if (!env.PRIVATE_MEDIA) throw new Error('R2 binding PRIVATE_MEDIA is not configured'); return env.PRIVATE_MEDIA; }
-function safeSlug(value: unknown): string { const slug = String(value || ''); if (!/^[\p{L}\p{N}][\p{L}\p{N}._-]{0,90}$/u.test(slug) || slug.includes('..')) throw new Error('Invalid article slug'); return slug; }
+
 async function readJson(request: Request, maxBytes = 2_000_000): Promise<any> {
   const length = Number(request.headers.get('Content-Length') || 0);
   if (length > maxBytes) throw new Error('Request body exceeds the allowed size');
   const raw = await request.text();
   if (new TextEncoder().encode(raw).byteLength > maxBytes) throw new Error('Request body exceeds the allowed size');
   return JSON.parse(raw);
-}
-function checkArticle(value: any) {
-  if (!value || typeof value.title !== 'string' || !value.title.trim() || value.title.length > 240) throw new Error('Title is required and must be under 240 characters');
-  if (!allowedSection.has(value.section)) throw new Error('Invalid article section');
-  safeSlug(value.slug);
-  if (typeof value.markdown !== 'string' || value.markdown.length > 1_500_000) throw new Error('Article body is missing or too large');
-  if (typeof value.description !== 'string' || value.description.length > 1000) throw new Error('Invalid description');
-  if (!Array.isArray(value.tags) || value.tags.length > 30 || value.tags.some((x: unknown) => typeof x !== 'string' || x.length > 50)) throw new Error('Invalid tags');
-}
-function createMarkdown(draft: any): { text: string; mediaKeys: string[] } {
-  const frontmatter = { ...(draft.frontmatter && typeof draft.frontmatter === 'object' ? draft.frontmatter : {}) };
-  Object.assign(frontmatter, {
-    title: draft.title,
-    description: draft.description,
-    pubDate: /^\d{4}-\d{2}-\d{2}$/.test(draft.pubDate || '') ? draft.pubDate : new Date().toISOString().slice(0, 10),
-    tags: draft.tags,
-    draft: false,
-    featured: Boolean(draft.featured)
-  });
-  if (draft.updatedDate) frontmatter.updatedDate = draft.updatedDate;
-  else delete frontmatter.updatedDate;
-  let body = String(draft.markdown || '').trim();
-  const mediaKeys = new Set<string>();
-  body = body.replace(/!\[([^\]]*)\]\(\/api\/media\/object\?key=(private\/[a-f0-9-]{36}\.webp)\)/g, (_whole, alt: string, key: string) => {
-    mediaKeys.add(key);
-    return `![${alt}](/images/${key.slice('private/'.length)})`;
-  });
-  return { text: `---\n${stringifyYaml(frontmatter).trimEnd()}\n---\n\n${body}\n`, mediaKeys: [...mediaKeys] };
 }
 
 function corsafePath(path: string) { return `/${path.split('/').map(encodeURIComponent).join('/')}`; }
