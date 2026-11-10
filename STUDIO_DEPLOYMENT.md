@@ -1,6 +1,6 @@
 # Studio 部署与 Cloudflare 配置
 
-线上资源不会由本仓库自动创建。本任务没有登录 Cloudflare/GitHub 控制台，也没有创建资源、部署、开通订阅或保存凭据。
+Cloudflare CLI 已登录。`tingwoshuo-studio-production`（APAC）D1 已创建并完成 `0001_initial.sql` 迁移；R2 已开通，私有 bucket `tingwoshuo-studio-private` 已存在。首个 fail-closed Worker 已部署到 `https://tingwoshuo-studio.zhangyanke1010.workers.dev`。Worker Access 策略、真实 team/AUD、允许邮箱 Secrets 和 GitHub App 尚未配置；当前应用返回 401，页面和 API 不可用。不要把密钥写入 Git。
 
 ## 0. 费用与配额（2026-11-10 检查）
 
@@ -13,23 +13,27 @@
 
 ## 1. Cloudflare 准备
 
-1. 登录 Cloudflare Dashboard，启用 `workers.dev` 子域名。记下账户子域名，以便构成 `tingwoshuo-studio.<账户子域>.workers.dev`。
-2. 先在 Zero Trust → Access → Applications → Add an application → Self-hosted 创建 Access 应用，hostname 填入以上 Studio hostname。只创建一条 Allow policy：Include → Emails → 你的已验证邮箱。不要加通配邮箱、绕过规则或公共 Bypass。Access 默认阻止未命中 Allow policy 的身份。
-3. 在应用详情记下 **Application Audience (AUD) Tag**，在 Zero Trust Overview 记下 team name。完整 issuer 为 `https://<team-name>.cloudflareaccess.com`。
-4. Workers & Pages → D1 → Create database，名称建议 `tingwoshuo-studio-production`。保存 Dashboard 返回的真实 Database ID。
-5. Storage & databases → R2 → Create bucket，名称建议 `tingwoshuo-studio-private`。只选 Standard bucket；不要启用公开 Development URL 或自定义域名。完成 R2 要求的订阅步骤前先核对计费页面。
+1. 在 Cloudflare Dashboard → Workers & Pages 设定账户 `workers.dev` 子域名，记下 `<账户子域>`。Worker 名称 `tingwoshuo-studio` 对应地址为 `https://tingwoshuo-studio.<账户子域>.workers.dev`。[Workers.dev 配置](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)
+2. 生产 D1 已创建并迁移：`tingwoshuo-studio-production`，区域提示为 APAC。当前机器的忽略文件 `wrangler.toml` 已写入真实 ID；其他环境请按下面的模板步骤配置。
+3. 在 Dashboard → Storage & databases → R2 → Overview 开通 R2。Cloudflare 会进入 checkout；先检查账户显示的计费条款，再自行确认。启用后创建 Standard 私有 bucket：`tingwoshuo-studio-private`。不要启用公开 Development URL 或自定义域名。[R2 开通步骤](https://developers.cloudflare.com/r2/get-started/)
+4. 首次 fail-closed Worker 部署已完成，入口为 `https://tingwoshuo-studio.zhangyanke1010.workers.dev`。当前因缺少真实 Access 配置与 allowlist，静态文件和 API 都返回 401，不提供 Studio 页面内容。
+5. Worker 出现在 Workers & Pages 后，进入 `tingwoshuo-studio` → Access → Protect this Worker behind Access，选择保护生产流量，并只添加一条 Allow 策略：Include → Emails → 你的工作台授权邮箱。不要添加通配邮箱、公共 Bypass 或未经保护的预览流量。保存后在 Manage Cloudflare Access 中读取 Application Audience (AUD) Tag 与 Zero Trust team name。[Worker Access 设置](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
+6. 将 `<team-name>` 和真实 AUD 填入 Worker 的 `ACCESS_TEAM`、`ACCESS_AUD`；通过 Cloudflare Secrets 设置 `ACCESS_ALLOWED_EMAIL`，并确保其邮箱与 Access Allow 策略完全一致。再部署一次并验证登录、未授权邮箱拒绝和匿名请求拒绝。
 
+Access 是部署后保护 `workers.dev` Worker 的配置；官方支持 Worker 级别保护，会覆盖该 Worker 的 `workers.dev` URL 和预览地址。不要只依赖应用内 JWT 校验来代替边缘 Access 门禁。[Cloudflare Access for Workers](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
+
+如需 preview，分别新建 preview Access policy、D1 和私有 R2 bucket；不要复用生产数据。
 如需 preview，分别新建 preview Access hostname、D1 和私有 R2 bucket；不要复用生产数据。
 
 ## 2. Cloudflare 配置文件和密钥
 
-在项目目录复制模板：
+首次配置时可复制模板：
 
 ```sh
 cp wrangler.production.example.toml wrangler.toml
 ```
 
-编辑 `wrangler.toml`：填写真实 D1 `database_id`、R2 `bucket_name`、Access team name 和 AUD。保留 `ENVIRONMENT = "production"`。文件已被 `.gitignore` 忽略，不要强制加入版本库。
+填写真实 D1 `database_id`、R2 `bucket_name`、Access team name 和 AUD。保留 `ENVIRONMENT = "production"`。`wrangler.toml` 已被 `.gitignore` 忽略，不要强制加入版本库。当前工作目录已包含一份本机忽略的 `wrangler.toml`，D1 ID 与私有 R2 bucket 名称已填好；在 Worker Access 建立后填写真实 team/AUD。
 
 应用 Access 认证邮箱及 GitHub App 私钥用 Worker Secrets 保存：
 
@@ -44,19 +48,19 @@ CLI 会交互输入 secret，避免把值写入命令历史。GitHub App ID 和 
 
 ## 3. D1 迁移与保护预览
 
-先完成生产迁移，然后部署 Worker。Worker 在缺少有效 Access JWT、Access 配置或 allowlist 时始终返回 401；首次部署前也不会公开静态文件。
+D1 的生产迁移已完成。缺少有效 Access JWT、正确 Access 配置或 allowlist 时，Worker 始终返回 401；首次部署即使暂未启用边缘 Access，也不会公开静态文件。完成 Access Worker 级保护和 GitHub App Secrets 后再进行最终部署与验证。
 
 ```sh
 pnpm typecheck
 pnpm test
 pnpm build
 pnpm exec wrangler d1 migrations apply tingwoshuo-studio-production --remote --config wrangler.toml
-pnpm deploy
+pnpm run deploy
 ```
 
 部署后从 Cloudflare 输出复制 `workers.dev` 地址，核对它与 Access 应用 hostname 完全一致。匿名 `curl -I https://<studio-host>/` 应先被 Access 登录拦截；若请求抵达 Worker，应返回 401，而不能收到 Studio HTML。未授权邮箱必须得到 Access 拒绝页。登录后应显示 Studio 工作台。
 
-Preview 用 `wrangler.preview.example.toml` 复制成 `wrangler.preview.toml` 并填入独立资源，命令为 `pnpm deploy:preview`。为 preview hostname 也创建仅含你的邮箱 Allow policy。不得因预览方便关闭 `ENVIRONMENT=production` 或 Access JWT 验证。
+Preview 用 `wrangler.preview.example.toml` 复制成 `wrangler.preview.toml` 并填入独立资源，命令为 `pnpm run deploy:preview`。为 preview hostname 也创建仅含你的邮箱 Allow policy。不得因预览方便关闭 `ENVIRONMENT=production` 或 Access JWT 验证。
 
 ## 4. GitHub App
 
