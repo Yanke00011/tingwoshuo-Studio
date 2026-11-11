@@ -45,6 +45,7 @@ async function readJson(request: Request, maxBytes = 2_000_000): Promise<any> {
 }
 
 function corsafePath(path: string) { return `/${path.split('/').map(encodeURIComponent).join('/')}`; }
+function base64Bytes(bytes: Uint8Array) { let binary = ''; for (let offset = 0; offset < bytes.length; offset += 8192) binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192)); return btoa(binary); }
 async function githubPosts(env: Env) {
   const { GITHUB_OWNER, GITHUB_REPO, GITHUB_BASE_BRANCH } = env;
   const path = `/repos/${encodeURIComponent(GITHUB_OWNER)}/${encodeURIComponent(GITHUB_REPO)}/git/trees/${encodeURIComponent(GITHUB_BASE_BRANCH)}?recursive=1`;
@@ -138,23 +139,25 @@ async function publish(env: Env, draftId: string, user: string, confirm: boolean
   if (draft.github_sha && draft.github_sha !== currentBlobSha) throw new Error('GitHub article changed since it was loaded. Reload it and resolve the conflict first.');
   if (!draft.github_sha && currentBlobSha) throw new Error('That article path already exists in GitHub');
   const generated = createMarkdown(data);
-  const treeEntries: Array<Record<string, string>> = [{ path, mode: '100644', type: 'blob', content: generated.text }];
+  const articleBlobResponse = await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/git/blobs`, { method: 'POST', body: JSON.stringify({ content: base64Bytes(new TextEncoder().encode(generated.text)), encoding: 'base64' }) });
+  const articleBlob = await articleBlobResponse.json() as { sha: string };
+  if (!/^[a-f0-9]{40}$/.test(articleBlob.sha || '')) throw new Error('GitHub did not return a valid published article blob SHA');
+  const treeEntries: Array<Record<string, string>> = [{ path, mode: '100644', type: 'blob', sha: articleBlob.sha }];
   for (const key of generated.mediaKeys) {
     const image = await requireR2(env).get(key);
     if (!image) throw new Error(`Private image is missing: ${key}`);
     const bytes = new Uint8Array(await new Response(image.body).arrayBuffer());
-    let binary = '';
-    for (let offset = 0; offset < bytes.length; offset += 8192) binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
-    const blobResponse = await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/git/blobs`, { method: 'POST', body: JSON.stringify({ content: btoa(binary), encoding: 'base64' }) });
+    const blobResponse = await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/git/blobs`, { method: 'POST', body: JSON.stringify({ content: base64Bytes(bytes), encoding: 'base64' }) });
     const blob = await blobResponse.json() as { sha: string };
     treeEntries.push({ path: `public/images/${key.slice('private/'.length)}`, mode: '100644', type: 'blob', sha: blob.sha });
   }
   const treeResponse = await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/git/trees`, { method: 'POST', body: JSON.stringify({ base_tree: baseSha, tree: treeEntries }) });
-  const tree = await treeResponse.json() as { sha: string; tree?: Array<{ path: string; sha: string; type: string }> };
+  const tree = await treeResponse.json() as { sha: string };
+  if (!/^[a-f0-9]{40}$/.test(tree.sha || '')) throw new Error('GitHub did not return a valid commit tree SHA');
   const commitResponse = await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/git/commits`, { method: 'POST', body: JSON.stringify({ message: `Studio: ${data.title}`, tree: tree.sha, parents: [baseSha] }) });
   const commit = await commitResponse.json() as any;
-  const articleBlobSha = tree.tree?.find((entry) => entry.path === path)?.sha;
-  if (!articleBlobSha) throw new Error('GitHub did not return the published article blob SHA');
+  const articleBlobSha = articleBlob.sha;
+  if (!/^[a-f0-9]{40}$/.test(commit.sha || '')) throw new Error('GitHub did not return a valid publish commit SHA');
   try {
     await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/git/refs/heads/${encodeURIComponent(base)}`, { method: 'PATCH', body: JSON.stringify({ sha: commit.sha, force: false }) });
   } catch (error) {
