@@ -19,7 +19,7 @@ export function createMarkdown(draft: Record<string, any>): { text: string; medi
   const frontmatter = { ...(draft.frontmatter && typeof draft.frontmatter === 'object' ? draft.frontmatter : {}) };
   Object.assign(frontmatter, {
     title: draft.title,
-    description: draft.description,
+    description: typeof draft.description === 'string' && draft.description.trim() ? draft.description.trim() : String(draft.title || '').trim(),
     pubDate: /^\d{4}-\d{2}-\d{2}$/.test(draft.pubDate || '') ? draft.pubDate : new Date().toISOString().slice(0, 10),
     tags: draft.tags,
     draft: false,
