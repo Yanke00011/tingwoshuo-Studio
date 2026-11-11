@@ -4,6 +4,7 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-11-10",
   "workers_dev": true,
+  "keep_vars": true,
   "vars": {
     "ENVIRONMENT": "production",
     "ACCESS_TEAM": "yankezhang",
