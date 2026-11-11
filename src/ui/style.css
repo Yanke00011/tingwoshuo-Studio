@@ -51,3 +51,9 @@
  .library-drawer .drawer-row{background:#292f29;color:#e5ebe4;border-color:#414a41}
  .library-drawer .drawer-row small{color:#b8c1b7}
 }
+
+.section-pick{position:relative}
+.section-menu{position:absolute;z-index:15;top:calc(100% + 7px);left:0;min-width:156px;padding:5px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);display:grid;gap:2px}
+.section-menu button{height:34px;padding:0 9px;display:flex;align-items:center;gap:9px;border:0;border-radius:7px;background:transparent;color:var(--ink);text-align:left;font-size:11px}
+.section-menu button:hover,.section-menu button.selected{background:var(--wash)}
+.section-menu button svg{margin-left:auto;color:var(--green)}
