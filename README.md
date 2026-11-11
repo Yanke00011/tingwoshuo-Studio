@@ -26,6 +26,9 @@ pnpm build
 
 ## 文档
 
+- [Codex 会话与开发规范](AGENTS.md)
+- [跨仓库开发进度](PROGRESS.md)
+- [后续路线图](ROADMAP.md)
 - [架构说明](STUDIO_ARCHITECTURE.md)
 - [部署步骤](STUDIO_DEPLOYMENT.md)
 - [使用指南](STUDIO_USER_GUIDE.md)

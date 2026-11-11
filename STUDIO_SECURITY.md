@@ -6,7 +6,7 @@
 - Access 在 Cloudflare 边缘先保护整个 `workers.dev` hostname；Worker 配置 `run_worker_first = true`，即使命中静态资源也先过身份检查。
 - 写请求校验同源 `Origin`、拒绝跨站 Fetch Metadata，要求 HttpOnly/SameSite=Strict CSRF Cookie 与内存中的 CSRF header 匹配。
 - 不启用 CORS。GitHub App 私钥和允许邮箱只通过 Worker Secrets；短期 installation token 仅留在 Worker 运行内存。
-- 文章路径允许列表、Slug 校验、竞态 SHA/revision 检查、正文与 JSON 尺寸上限、私有 R2 对象签名校验、图片 8 MiB 限额、每用户小时写入速率限制。
+- 文章路径允许列表、Slug 校验、竞态 SHA/revision 检查、正文与 JSON 尺寸上限、私有 R2 对象签名校验、图片 8 MiB 限额、每用户写入速率限制；已发布文章的 GitHub 删除额外限为每小时 5 次，并校验当前文件 SHA、通过 `force: false` 防止覆盖并发提交。
 - 编辑器源码不使用 `dangerouslySetInnerHTML`；预览在无脚本 sandbox iframe，附带 CSP。
 
 ## 本地例外
@@ -21,4 +21,4 @@ D1 保存私密文章明文与历史；R2 bucket 不应绑定公共自定义域�
 
 ## 尚未实现的强化
 
-没有专门的恶意内容净化服务、异地自动备份、GitHub Webhook 签名处理、Pages 部署状态轮询、未使用媒体的静态分析或多管理员审批。对富文本无法安全解析的 MDX/HTML 使用源码模式；发布前由作者核查预览。R2 图片仅在已确认 PR 中导出至博客仓库。
+没有专门的恶意内容净化服务、异地自动备份、GitHub Webhook 签名处理、Pages 部署状态轮询、未使用媒体的静态分析或多管理员审批。对富文本无法安全解析的 MDX/HTML 使用源码模式；发布前由作者核查预览。R2 图片只在明确确认发布时导出至博客仓库；未引用的公开图片不会在删除文章时自动清理，避免误删共享资源。

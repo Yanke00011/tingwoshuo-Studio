@@ -1,6 +1,6 @@
 # Studio 部署与 Cloudflare 配置
 
-Cloudflare CLI 已登录。`tingwoshuo-studio-production`（APAC）D1 已创建并迁移，R2 bucket `tingwoshuo-studio-private` 已绑定。Worker Access、team/AUD 与 `ACCESS_ALLOWED_EMAIL` 已配置，未登录访问会跳转 Access 登录。GitHub App 已安装到 `Yanke00011/tingwoshuo.github.io`；App ID、Installation ID 与 PKCS#8 私钥已存入 Worker Secrets。只读验证了安装令牌、仓库内容读取和 PR 列表读取；未执行过内容写入。不要把密钥写入 Git。
+截至 2026-11-11，生产 D1 `tingwoshuo-studio-production` 已创建并迁移，私有 R2 bucket `tingwoshuo-studio-private` 已绑定。Worker Access、team/AUD 与 `ACCESS_ALLOWED_EMAIL` 已配置；未登录访问会跳转 Access 登录。GitHub App 已安装到 `Yanke00011/tingwoshuo.github.io`，凭据存于 Worker Secrets，不要把密钥写入 Git。Studio 已实际向博客仓库提交发布文章，最近一次 Studio Workers Build 和博客 Cloudflare Pages 部署检查均成功。已发布文章的删除接口和 UI 已实现，但尚未对真实线上文章执行删除；不要把它描述成已实测。
 
 ## 0. 费用与配额（2026-11-10 检查）
 

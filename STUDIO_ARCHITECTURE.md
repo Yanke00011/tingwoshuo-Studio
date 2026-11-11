@@ -29,7 +29,7 @@ wrangler*.toml     本地配置和生产/预览模板
 
 ## 发布事务
 
-Worker 创建短期 GitHub App installation token，读取默认分支最新提交、验证原文章 blob SHA、准备仅含目标文章和引用图片的 Git tree，并创建一个以当前分支为父级的提交，再用 `force: false` 快进更新默认分支 ref；不创建发布分支或 Pull Request。若默认分支在准备期间前进，GitHub 会拒绝更新，Studio 要求重新预览。Cloudflare Pages 由默认分支提交触发；当前不跟踪构建结果。
+Worker 创建短期 GitHub App installation token。发布会读取默认分支最新提交、验证原文章 blob SHA、创建文章 blob 与引用图片 blob、组装 Git tree 并创建提交，再用 `force: false` 快进更新默认分支 ref；不创建发布分支或 Pull Request。删除已发布文章会读取默认分支快照、核对当前文件 SHA、用 `sha: null` 从新 Git tree 移除目标文章并创建删除提交，再以 `force: false` 更新分支。若分支在操作期间前进，GitHub 会拒绝更新；Studio 不应覆盖并发提交。已发布文章删除成功后会清理关联 D1 草稿、版本与发布记录；GitHub-only 文章只删除仓库文件。Cloudflare Pages 由默认分支提交触发；当前不跟踪构建结果，线上删除流程尚未在真实文章上演练。
 
 ## 共享内容模型
 
