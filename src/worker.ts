@@ -29,8 +29,8 @@ const idPattern = /^[a-zA-Z0-9_-]{8,80}$/;
 function requireDb(env: Env): D1Database { if (!env.DB) throw new Error('D1 binding DB is not configured'); return env.DB; }
 async function consumeRate(env: Env, user: string, path: string) {
   const db = requireDb(env); const now = Date.now(); const hour = Math.floor(now / 3_600_000) * 3_600_000;
-  const isUpload = path === '/api/media'; const isPublish = path === '/api/publish'; const limit = isUpload ? 60 : isPublish ? 5 : 240;
-  const key = `${user.toLowerCase()}:${isUpload ? 'upload' : isPublish ? 'publish' : 'write'}`;
+  const isUpload = path === '/api/media'; const isPublish = path === '/api/publish'; const isArticleDelete = path === '/api/github/post'; const limit = isUpload ? 60 : isPublish || isArticleDelete ? 5 : 240;
+  const key = `${user.toLowerCase()}:${isUpload ? 'upload' : isPublish ? 'publish' : isArticleDelete ? 'delete' : 'write'}`;
   const row: any = await db.prepare('INSERT INTO rate_limits(identity, window_start, count) VALUES (?, ?, 1) ON CONFLICT(identity) DO UPDATE SET count = CASE WHEN window_start < ? THEN 1 ELSE count + 1 END, window_start = CASE WHEN window_start < ? THEN ? ELSE window_start END RETURNING count').bind(key, hour, hour, hour, hour).first();
   if ((row?.count || 0) > limit) { const error = new Error('Too many requests. Please wait before trying again.') as Error & {status:number}; error.status = 429; throw error; }
 }
@@ -173,6 +173,77 @@ async function publish(env: Env, draftId: string, user: string, confirm: boolean
   return { status: 'pushed', branch: base, commit: commit.sha, commitUrl: `https://github.com/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/commit/${commit.sha}`, target: path, revision: draft.revision, updatedAt: now, githubPath: path, githubSha: articleBlobSha };
 }
 
+async function deletePublishedArticle(env: Env, input: any, user: string) {
+  if (input.confirmed !== true) throw new Error('Explicit deletion confirmation is required');
+  const path = repoPath(String(input.path || ''));
+  const expectedSha = String(input.expectedSha || '');
+  if (!/^[a-f0-9]{40}$/.test(expectedSha)) throw new Error('A valid current GitHub article SHA is required');
+  const draftId = input.draftId ? String(input.draftId) : '';
+  if (draftId && !idPattern.test(draftId)) throw new Error('Invalid draft id');
+
+  const db = requireDb(env);
+  let linkedDraft: any = null;
+  if (draftId) {
+    linkedDraft = await db.prepare('SELECT id, section, slug, status, github_path, data_json FROM drafts WHERE id = ?').bind(draftId).first();
+    if (linkedDraft) {
+      const data = JSON.parse(linkedDraft.data_json || '{}');
+      const allowedPaths = linkedDraft.github_path ? [linkedDraft.github_path] : [
+        `src/content/${linkedDraft.section}/${linkedDraft.slug}.md`,
+        `src/content/${linkedDraft.section}/${linkedDraft.slug}.mdx`
+      ];
+      if (!allowedPaths.includes(path)) throw Object.assign(new Error('The article path does not match this Studio record.'), { status: 409 });
+      if (!data || data.section !== linkedDraft.section || data.slug !== linkedDraft.slug) throw new Error('Studio article metadata is inconsistent');
+    }
+  }
+
+  const base = env.GITHUB_BASE_BRANCH;
+  const ref = await (await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/git/ref/heads/${encodeURIComponent(base)}`)).json() as any;
+  const baseSha = String(ref.object?.sha || '');
+  if (!/^[a-f0-9]{40}$/.test(baseSha)) throw new Error('Could not resolve GitHub base branch SHA');
+  let current: Awaited<ReturnType<typeof githubRead>>;
+  try {
+    current = await githubRead(env, path, baseSha);
+  } catch (error) {
+    if (!(error instanceof Error && /GitHub API returned 404/.test(error.message))) throw error;
+    if (linkedDraft) {
+      await db.batch([
+        db.prepare('DELETE FROM publish_jobs WHERE draft_id = ?').bind(draftId),
+        db.prepare('DELETE FROM drafts WHERE id = ?').bind(draftId)
+      ]);
+    }
+    return { deleted: true, alreadyAbsent: true, path, draftRemoved: Boolean(linkedDraft) };
+  }
+  if (current.sha !== expectedSha) throw Object.assign(new Error('GitHub article changed since it was loaded. Refresh the article list and retry deletion.'), { status: 409, conflict: true });
+
+  const treeResponse = await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/git/trees`, {
+    method: 'POST',
+    body: JSON.stringify({ base_tree: baseSha, tree: [{ path, mode: '100644', type: 'blob', sha: null }] })
+  });
+  const tree = await treeResponse.json() as { sha: string };
+  if (!/^[a-f0-9]{40}$/.test(tree.sha || '')) throw new Error('GitHub did not return a valid deletion tree SHA');
+  const commitResponse = await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/git/commits`, {
+    method: 'POST',
+    body: JSON.stringify({ message: `Studio: Delete ${path}`, tree: tree.sha, parents: [baseSha] })
+  });
+  const commit = await commitResponse.json() as { sha: string };
+  if (!/^[a-f0-9]{40}$/.test(commit.sha || '')) throw new Error('GitHub did not return a valid deletion commit SHA');
+  try {
+    await githubRequest(env, `/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/git/refs/heads/${encodeURIComponent(base)}`, {
+      method: 'PATCH', body: JSON.stringify({ sha: commit.sha, force: false })
+    });
+  } catch (error) {
+    if (error instanceof Error && /GitHub API returned (409|422)/.test(error.message)) throw Object.assign(new Error('The blog branch changed during deletion. Nothing was overwritten; refresh the article list and retry.'), { status: 409, conflict: true });
+    throw error;
+  }
+  if (linkedDraft) {
+    await db.batch([
+      db.prepare('DELETE FROM publish_jobs WHERE draft_id = ?').bind(draftId),
+      db.prepare('DELETE FROM drafts WHERE id = ?').bind(draftId)
+    ]);
+  }
+  return { deleted: true, alreadyAbsent: false, path, draftRemoved: Boolean(linkedDraft), branch: base, commit: commit.sha, commitUrl: `https://github.com/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/commit/${commit.sha}`, deletedBy: user };
+}
+
 async function api(request: Request, env: Env, user: string): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -235,6 +306,10 @@ async function api(request: Request, env: Env, user: string): Promise<Response> 
   }
   if (path === '/api/github/posts' && request.method === 'GET') return json(await githubPosts(env));
   const ghPost = path.match(/^\/api\/github\/post$/);
+  if (ghPost && request.method === 'DELETE') {
+    const input = await readJson(request, 20_000);
+    return json(await deletePublishedArticle(env, input, user));
+  }
   if (ghPost && request.method === 'GET') {
     const target = url.searchParams.get('path') || ''; return json(await githubRead(env, target));
   }
@@ -271,7 +346,7 @@ export default {
       try { return await api(request, env, user); }
       catch (error) {
         const status = Number((error as any)?.status) || 400;
-        return json({ error: error instanceof Error ? error.message : 'Request failed' }, status);
+        return json({ error: error instanceof Error ? error.message : 'Request failed', ...((error as any)?.conflict ? { conflict: true } : {}) }, status);
       }
     }
     if (request.method !== 'GET' && request.method !== 'HEAD') return json({ error: 'Method not allowed' }, 405);
