@@ -15,6 +15,7 @@ interface Env extends GitHubEnv {
   ACCESS_ALLOWED_EMAIL?: string;
   ENVIRONMENT?: string;
   LOCAL_DEV_EMAIL?: string;
+  CONTENT_BACKEND?: string;
   GITHUB_BASE_BRANCH: string;
   GITHUB_OWNER: string;
   GITHUB_REPO: string;
@@ -81,8 +82,17 @@ async function privateMedia(request: Request, env: Env, url: URL) {
     const head = new Uint8Array(bytes.slice(0, 12));
     if (new TextDecoder().decode(head.slice(0, 4)) !== 'RIFF' || new TextDecoder().decode(head.slice(8, 12)) !== 'WEBP') return json({ error: 'Invalid WebP signature' }, 415);
     const key = `private/${crypto.randomUUID()}.webp`;
-    await bucket.put(key, bytes, { httpMetadata: { contentType: 'image/webp', cacheControl: 'private, no-store' }, customMetadata: { uploadedAt: new Date().toISOString() } });
-    await requireDb(env).prepare('INSERT INTO media (key, alt, caption, created_at) VALUES (?, ?, ?, ?)').bind(key, '', '', new Date().toISOString()).run();
+    const db = requireDb(env);
+    await db.prepare('INSERT INTO media (key, alt, caption, created_at) VALUES (?, ?, ?, ?)').bind(key, '', '', new Date().toISOString()).run();
+    try {
+      await bucket.put(key, bytes, { httpMetadata: { contentType: 'image/webp', cacheControl: 'private, no-store' }, customMetadata: { uploadedAt: new Date().toISOString() } });
+    } catch (error) {
+      await Promise.allSettled([
+        bucket.delete(key),
+        db.prepare('DELETE FROM media WHERE key = ?').bind(key).run(),
+      ]);
+      throw error;
+    }
     return json({ key, private: true });
   }
   if (request.method === 'GET') {
@@ -98,6 +108,8 @@ async function privateMedia(request: Request, env: Env, url: URL) {
   if (request.method === 'DELETE') {
     const key = url.searchParams.get('key') || '';
     if (!/^private\/[a-f0-9-]{36}\.webp$/.test(key)) return json({ error: 'Invalid private media key' }, 400);
+    const linked = await requireDb(env).prepare("SELECT key FROM media WHERE key = ? AND (visibility = 'published' OR EXISTS (SELECT 1 FROM article_media WHERE media_key = media.key)) LIMIT 1").bind(key).first();
+    if (linked) return json({ error: 'This image is attached to an article version. It is retained so published and recoverable content cannot lose media.' }, 409);
     await bucket.delete(key);
     await requireDb(env).prepare('DELETE FROM media WHERE key = ?').bind(key).run();
     return json({ deleted: true });
@@ -244,13 +256,200 @@ async function deletePublishedArticle(env: Env, input: any, user: string) {
   return { deleted: true, alreadyAbsent: false, path, draftRemoved: Boolean(linkedDraft), branch: base, commit: commit.sha, commitUrl: `https://github.com/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/commit/${commit.sha}`, deletedBy: user };
 }
 
+const validIsoDate = (value: unknown): string | null => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) ? value : null;
+async function articleHash(value: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+function referencedMediaKeys(data: Record<string, any>) {
+  const keys = new Set<string>();
+  const source = `${String(data.markdown || '')}\n${String(data.frontmatter?.cover || '')}`;
+  for (const match of source.matchAll(/(?:key=|\/media\/|\/images\/)(private\/)?([a-f0-9-]{36})\.webp/gu)) keys.add(`private/${match[2]}.webp`);
+  return [...keys];
+}
+function publicMediaUrl(source: string) {
+  return source
+    .replace(/\/api\/media\/object\?key=(private\/[a-f0-9-]{36}\.webp)/gu, '/media/$1')
+    .replace(/\/images\/([a-f0-9-]{36}\.webp)/gu, '/media/private/$1');
+}
+function articleFrontmatter(data: Record<string, any>) {
+  const result = { ...(data.frontmatter && typeof data.frontmatter === 'object' ? data.frontmatter : {}) };
+  if (typeof result.cover === 'string') result.cover = publicMediaUrl(result.cover);
+  result.title = data.title;
+  result.description = data.description;
+  result.pubDate = validIsoDate(data.pubDate) || new Date().toISOString().slice(0, 10);
+  if (data.updatedDate) result.updatedDate = validIsoDate(data.updatedDate);
+  result.tags = data.tags;
+  result.featured = Boolean(data.featured);
+  delete result.draft;
+  return result;
+}
+function articleSnapshot(db: D1Database, id: string, revision: number, data: Record<string, any>, body: string, frontmatter: Record<string, unknown>, hash: string, now: string, user: string, guardRevision?: number) {
+  const fields = 'article_id, revision, title, description, pub_date, content_updated_date, body_markdown, body_html, tags_json, frontmatter_json, content_sha256, created_at, created_by';
+  const values = '?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?';
+  if (guardRevision === undefined) {
+    return db.prepare(`INSERT INTO article_versions (${fields}) VALUES (${values})`)
+      .bind(id, revision, data.title.trim(), data.description.trim(), validIsoDate(data.pubDate) || new Date().toISOString().slice(0, 10), data.updatedDate ? validIsoDate(data.updatedDate) : null, body, JSON.stringify(data.tags), JSON.stringify(frontmatter), hash, now, user);
+  }
+  return db.prepare(`INSERT INTO article_versions (${fields}) SELECT ${values} WHERE EXISTS (SELECT 1 FROM articles WHERE id = ? AND revision = ?) AND NOT EXISTS (SELECT 1 FROM article_versions WHERE article_id = ? AND revision = ?)`)
+    .bind(id, revision, data.title.trim(), data.description.trim(), validIsoDate(data.pubDate) || new Date().toISOString().slice(0, 10), data.updatedDate ? validIsoDate(data.updatedDate) : null, body, JSON.stringify(data.tags), JSON.stringify(frontmatter), hash, now, user, id, guardRevision, id, revision);
+}
+function mediaRelations(db: D1Database, id: string, revision: number, data: Record<string, any>, keys: string[], now: string) {
+  const coverValue = String(data.frontmatter?.cover || '');
+  const coverKeyMatch = coverValue.match(/(?:key=|\/media\/|\/images\/)(?:private\/)?([a-f0-9-]{36})\.webp/u);
+  return keys.map((key, position) => db.prepare("INSERT INTO article_media (article_id, media_key, role, revision, position, alt, caption, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM articles WHERE id = ? AND revision = ? AND published_revision = ? AND status = 'published') ON CONFLICT DO NOTHING")
+    .bind(id, key, coverKeyMatch?.[1] && key.includes(coverKeyMatch[1]) ? 'cover' : 'body', revision, position, key === keys[0] && coverKeyMatch ? String(data.frontmatter?.coverAlt || '') : '', '', now, id, revision, revision));
+}
+
+async function v7ArticleApi(request: Request, env: Env, user: string, url: URL): Promise<Response | undefined> {
+  const db = requireDb(env);
+  const path = url.pathname;
+  if (path === '/api/v7/articles' && request.method === 'GET') {
+    const { results } = await db.prepare('SELECT id, revision, status, title, section, slug, updated_at, published_at FROM articles ORDER BY updated_at DESC LIMIT 500').all();
+    return json(results);
+  }
+  if (path === '/api/v7/articles' && request.method === 'POST') {
+    const input = await readJson(request); checkArticle(input);
+    const pubDate = validIsoDate(input.pubDate);
+    if (!pubDate) return json({ error: 'A valid publication date is required.' }, 400);
+    const id = crypto.randomUUID(); const now = new Date().toISOString();
+    const data = { ...input, frontmatter: articleFrontmatter(input) };
+    const body = publicMediaUrl(input.markdown);
+    const hash = await articleHash(JSON.stringify({ ...data, body }));
+    try {
+      await db.batch([
+        db.prepare("INSERT INTO articles (id, section, slug, title, description, pub_date, content_updated_date, body_markdown, body_html, tags_json, frontmatter_json, status, revision, published_revision, content_sha256, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 'draft', 1, NULL, ?, ?, ?)")
+          .bind(id, input.section, input.slug, input.title.trim(), input.description.trim(), pubDate, validIsoDate(input.updatedDate), body, JSON.stringify(input.tags), JSON.stringify(data.frontmatter), hash, now, now),
+        articleSnapshot(db, id, 1, input, body, data.frontmatter, hash, now, user),
+      ]);
+    } catch (error) { if (/UNIQUE|constraint/i.test(String(error))) return json({ error: 'That section and slug already exist.' }, 409); throw error; }
+    return json({ id, revision: 1, status: 'draft', updatedAt: now }, 201);
+  }
+  const match = path.match(/^\/api\/v7\/articles\/([a-zA-Z0-9_-]{8,80})(?:\/(publish|withdraw|restore|versions(?:\/(\d+)(?:\/restore)?)?))?$/u);
+  if (!match) return undefined;
+  const [, id, action, versionNumber] = match;
+  if (request.method === 'GET' && !action) {
+    const row: any = await db.prepare('SELECT * FROM articles WHERE id = ?').bind(id).first();
+    return row ? json({ ...row, tags: JSON.parse(row.tags_json), frontmatter: JSON.parse(row.frontmatter_json) }) : json({ error: 'Article not found' }, 404);
+  }
+  if (request.method === 'GET' && action === 'versions') {
+    const { results } = await db.prepare('SELECT revision, created_at, created_by FROM article_versions WHERE article_id = ? ORDER BY revision DESC LIMIT 200').bind(id).all();
+    return json(results);
+  }
+  if (request.method === 'GET' && versionNumber && action === `versions/${versionNumber}`) {
+    const article: any = await db.prepare('SELECT section, slug FROM articles WHERE id = ?').bind(id).first();
+    const version: any = await db.prepare('SELECT * FROM article_versions WHERE article_id = ? AND revision = ?').bind(id, Number(versionNumber)).first();
+    return version && article ? json({ ...version, data: { title: version.title, section: article.section, slug: article.slug, description: version.description, tags: JSON.parse(version.tags_json), pubDate: version.pub_date, updatedDate: version.content_updated_date || '', featured: Boolean(JSON.parse(version.frontmatter_json).featured), markdown: version.body_markdown, extension: '.md', frontmatter: JSON.parse(version.frontmatter_json) } }) : json({ error: 'Article version not found' }, 404);
+  }
+  const row: any = await db.prepare('SELECT * FROM articles WHERE id = ?').bind(id).first();
+  if (!row) return json({ error: 'Article not found' }, 404);
+  const expectedRevision = Number(request.headers.get('If-Match')?.replaceAll('"', '') || '0');
+  if (!Number.isInteger(expectedRevision) || expectedRevision < 1) return json({ error: 'A valid If-Match revision is required.' }, 428);
+
+  if (request.method === 'PUT' && !action) {
+    const input = await readJson(request); checkArticle(input);
+    if (input.section !== row.section || input.slug !== row.slug) return json({ error: 'Section and slug are stable after an article is created.' }, 409);
+    if (row.revision !== expectedRevision) return json({ error: 'This article changed on another device.', conflict: true }, 409);
+    if (row.status === 'deleted') return json({ error: 'Restore this article before editing it.' }, 409);
+    const revision = row.revision + 1; const now = new Date().toISOString();
+    const data = { ...input, frontmatter: articleFrontmatter(input) }; const body = publicMediaUrl(input.markdown);
+    const hash = await articleHash(JSON.stringify({ ...data, body }));
+    await db.batch([
+      db.prepare('UPDATE articles SET title = ?, description = ?, pub_date = ?, content_updated_date = ?, body_markdown = ?, tags_json = ?, frontmatter_json = ?, revision = ?, content_sha256 = ?, updated_at = ? WHERE id = ? AND revision = ? AND deleted_at IS NULL')
+        .bind(input.title.trim(), input.description.trim(), validIsoDate(input.pubDate), validIsoDate(input.updatedDate), body, JSON.stringify(input.tags), JSON.stringify(data.frontmatter), revision, hash, now, id, expectedRevision),
+      articleSnapshot(db, id, revision, input, body, data.frontmatter, hash, now, user, revision),
+    ]);
+    const current: any = await db.prepare('SELECT revision, content_sha256 FROM articles WHERE id = ?').bind(id).first();
+    if (current?.revision !== revision || current?.content_sha256 !== hash) return json({ error: 'This article changed on another device.', conflict: true }, 409);
+    return json({ id, revision, status: row.status, updatedAt: now });
+  }
+  if (request.method === 'POST' && action === 'publish') {
+    const input = await readJson(request, 20_000);
+    if (input.confirmed !== true) return json({ error: 'Explicit publish confirmation is required.' }, 400);
+    if (row.revision !== expectedRevision) {
+      const publishedFrom: any = row.revision === expectedRevision + 1 && row.status === 'published' && row.published_revision === row.revision
+        ? await db.prepare('SELECT content_sha256 FROM article_versions WHERE article_id = ? AND revision = ?').bind(id, expectedRevision).first()
+        : null;
+      if (publishedFrom?.content_sha256 && input.contentHash === publishedFrom.content_sha256) return json({ id, revision: row.revision, status: 'published', alreadyPublished: true });
+      return json({ error: 'This article changed on another device.', conflict: true }, 409);
+    }
+    if (row.status === 'deleted') return json({ error: 'Restore this article before publishing it.' }, 409);
+    const keys = referencedMediaKeys({ markdown: row.body_markdown, frontmatter: JSON.parse(row.frontmatter_json) });
+    for (const key of keys) {
+      if (!await requireR2(env).get(key)) return json({ error: `Referenced image is missing: ${key}` }, 409);
+      if (!await db.prepare('SELECT key FROM media WHERE key = ?').bind(key).first()) return json({ error: `Referenced image is not registered in Studio: ${key}` }, 409);
+    }
+    const revision = row.revision + 1; const now = new Date().toISOString();
+    const data = { title: row.title, description: row.description, section: row.section, slug: row.slug, pubDate: row.pub_date, updatedDate: row.content_updated_date, tags: JSON.parse(row.tags_json), frontmatter: JSON.parse(row.frontmatter_json) };
+    const body = publicMediaUrl(row.body_markdown); const frontmatter = articleFrontmatter(data);
+    const hash = await articleHash(JSON.stringify({ ...data, body }));
+    await db.batch([
+      db.prepare("UPDATE articles SET title = ?, description = ?, pub_date = ?, content_updated_date = ?, body_markdown = ?, tags_json = ?, frontmatter_json = ?, status = 'published', revision = ?, published_revision = ?, published_at = ?, deleted_at = NULL, content_sha256 = ?, updated_at = ? WHERE id = ? AND revision = ? AND status != 'deleted'")
+        .bind(data.title, data.description, data.pubDate, data.updatedDate, body, JSON.stringify(data.tags), JSON.stringify(frontmatter), revision, revision, now, hash, now, id, expectedRevision),
+      articleSnapshot(db, id, revision, data, body, frontmatter, hash, now, user, revision),
+      ...mediaRelations(db, id, revision, data, keys, now),
+      ...keys.map((key) => db.prepare("UPDATE media SET visibility = 'published', published_at = COALESCE(published_at, ?) WHERE key = ? AND EXISTS (SELECT 1 FROM articles WHERE id = ? AND revision = ? AND published_revision = ? AND status = 'published')").bind(now, key, id, revision, revision)),
+    ]);
+    const current: any = await db.prepare('SELECT revision, published_revision, status, content_sha256 FROM articles WHERE id = ?').bind(id).first();
+    if (current?.revision !== revision || current?.published_revision !== revision || current?.status !== 'published' || current?.content_sha256 !== hash) return json({ error: 'This article changed on another device.', conflict: true }, 409);
+    return json({ id, revision, status: 'published', publishedAt: now });
+  }
+  if (request.method === 'POST' && action === 'withdraw') {
+    if (row.revision !== expectedRevision) return json({ error: 'This article changed on another device.', conflict: true }, 409);
+    if (row.status !== 'published') return json({ error: 'Only a published article can be withdrawn.' }, 409);
+    const now = new Date().toISOString();
+    await db.prepare("UPDATE articles SET status = 'withdrawn', updated_at = ? WHERE id = ? AND revision = ? AND status = 'published'").bind(now, id, expectedRevision).run();
+    const current: any = await db.prepare('SELECT status, revision FROM articles WHERE id = ?').bind(id).first();
+    if (current?.status !== 'withdrawn' || current?.revision !== expectedRevision) return json({ error: 'This article changed on another device.', conflict: true }, 409);
+    return json({ id, revision: row.revision, status: 'withdrawn', updatedAt: now });
+  }
+  if (request.method === 'POST' && action === 'restore') {
+    if (row.revision !== expectedRevision) return json({ error: 'This article changed on another device.', conflict: true }, 409);
+    if (row.status !== 'deleted' && row.status !== 'withdrawn') return json({ error: 'Only withdrawn or deleted articles can be restored.' }, 409);
+    const now = new Date().toISOString();
+    await db.prepare("UPDATE articles SET status = 'draft', deleted_at = NULL, published_revision = NULL, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?").bind(now, id, expectedRevision).run();
+    const current: any = await db.prepare('SELECT status, revision FROM articles WHERE id = ?').bind(id).first();
+    if (current?.status !== 'draft' || current?.revision !== expectedRevision + 1) return json({ error: 'This article changed on another device.', conflict: true }, 409);
+    return json({ id, revision: row.revision + 1, status: 'draft', updatedAt: now });
+  }
+  if (request.method === 'POST' && versionNumber && action === `versions/${versionNumber}/restore`) {
+    if (row.revision !== expectedRevision) return json({ error: 'This article changed on another device.', conflict: true }, 409);
+    const version: any = await db.prepare('SELECT * FROM article_versions WHERE article_id = ? AND revision = ?').bind(id, Number(versionNumber)).first();
+    if (!version) return json({ error: 'Article version not found.' }, 404);
+    const revision = row.revision + 1; const now = new Date().toISOString();
+    await db.batch([
+      db.prepare('UPDATE articles SET title = ?, description = ?, pub_date = ?, content_updated_date = ?, body_markdown = ?, tags_json = ?, frontmatter_json = ?, revision = ?, content_sha256 = ?, updated_at = ? WHERE id = ? AND revision = ?')
+        .bind(version.title, version.description, version.pub_date, version.content_updated_date, version.body_markdown, version.tags_json, version.frontmatter_json, revision, version.content_sha256, now, id, expectedRevision),
+      db.prepare('INSERT INTO article_versions (article_id, revision, title, description, pub_date, content_updated_date, body_markdown, body_html, tags_json, frontmatter_json, content_sha256, created_at, created_by) SELECT article_id, ?, title, description, pub_date, content_updated_date, body_markdown, body_html, tags_json, frontmatter_json, content_sha256, ?, ? FROM article_versions WHERE article_id = ? AND revision = ? AND EXISTS (SELECT 1 FROM articles WHERE id = ? AND revision = ?)')
+        .bind(revision, now, user, id, Number(versionNumber), id, revision),
+    ]);
+    const current: any = await db.prepare('SELECT revision FROM articles WHERE id = ?').bind(id).first();
+    if (current?.revision !== revision) return json({ error: 'This article changed on another device.', conflict: true }, 409);
+    return json({ id, revision, restoredFrom: Number(versionNumber), status: row.status, updatedAt: now });
+  }
+  if (request.method === 'DELETE' && !action) {
+    if (row.revision !== expectedRevision) return json({ error: 'This article changed on another device.', conflict: true }, 409);
+    if (row.status === 'deleted') return json({ id, revision: row.revision, status: 'deleted', alreadyDeleted: true });
+    const now = new Date().toISOString();
+    await db.prepare("UPDATE articles SET status = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ? AND revision = ? AND status != 'deleted'").bind(now, now, id, expectedRevision).run();
+    const current: any = await db.prepare('SELECT status, revision FROM articles WHERE id = ?').bind(id).first();
+    if (current?.status !== 'deleted' || current?.revision !== expectedRevision) return json({ error: 'This article changed on another device.', conflict: true }, 409);
+    return json({ id, revision: row.revision, status: 'deleted', deletedAt: now });
+  }
+  return json({ error: 'Method not allowed' }, 405);
+}
+
 async function api(request: Request, env: Env, user: string): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
+  if (path.startsWith('/api/v7/articles')) {
+    const response = await v7ArticleApi(request, env, user, url);
+    if (response) return response;
+  }
   if (path === '/api/session' && request.method === 'GET') {
     const token = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '');
-    const secure = env.ENVIRONMENT === 'production' ? '; Secure' : '';
-    return json({ email: user, csrf: token }, 200, { 'Set-Cookie': `studio_csrf=${token}; Path=/; HttpOnly; SameSite=Strict${secure}; Max-Age=3600` });
+    const secure = env.ENVIRONMENT !== 'development' ? '; Secure' : '';
+    return json({ email: user, csrf: token, contentBackend: env.CONTENT_BACKEND === 'd1' ? 'd1' : 'github' }, 200, { 'Set-Cookie': `studio_csrf=${token}; Path=/; HttpOnly; SameSite=Strict${secure}; Max-Age=3600` });
   }
   if (path === '/api/drafts' && request.method === 'GET') {
     const { results } = await requireDb(env).prepare('SELECT id, revision, status, title, section, slug, updated_at, github_path, github_sha FROM drafts ORDER BY updated_at DESC').all();

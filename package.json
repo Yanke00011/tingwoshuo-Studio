@@ -10,6 +10,10 @@
     "test": "vitest run",
     "deploy": "pnpm build && wrangler deploy --config wrangler.jsonc",
     "db:local:migrate": "wrangler d1 migrations apply tingwoshuo-studio-local --local --config wrangler.dev.toml",
+    "db:v7:test:migrate": "wrangler d1 migrations apply tingwoshuo-studio-migration-test-v7 --local --config wrangler.migration.jsonc",
+    "deploy:staging": "pnpm build && wrangler deploy --config wrangler.staging.toml",
+    "v7:backup": "node scripts/v7-backup.mjs",
+    "v7:export-legacy": "node scripts/v7-export-legacy.mjs",
     "deploy:preview": "pnpm build && wrangler deploy --config wrangler.preview.toml"
   },
   "dependencies": {

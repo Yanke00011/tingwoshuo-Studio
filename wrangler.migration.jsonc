@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tingwoshuo-studio-migration-test-v7",
+  "compatibility_date": "2026-11-10",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tingwoshuo-studio-migration-test-v7",
+      "database_id": "00000000-0000-0000-0000-000000000008",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
