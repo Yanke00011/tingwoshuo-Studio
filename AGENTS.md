@@ -30,12 +30,12 @@ At the start of every new Codex chat or resumed task:
 
 ### Public blog (`tingwoshuo.github.io`)
 
-- Astro 5 static site with TypeScript, Astro Content Collections/Zod, Tailwind CSS 4, MD/MDX, Pagefind, RSS, and sitemap generation.
-- `src/content/life/` and `src/content/tech/` are the public content collections. `src/content.config.ts` is the authoritative content schema.
-- `src/pages/` contains static routes; `src/components/`, `src/layouts/`, `src/lib/`, and `src/config/` separate presentation, queries, and site configuration.
+- The V7 working tree uses Astro 5 Workers SSR, TypeScript, Tailwind CSS 4, MD/MDX, D1 published-only routes, RSS, search, and sitemap.
+- Production remains on static Cloudflare Pages + GitHub Markdown until full backup, isolated acceptance and a separately authorized cutover.
+- `src/content/life/` and `src/content/tech/` remain the legacy source archive; D1 article slugs preserve existing public paths.
 - `tools/editor/` is an additional loopback-only local authoring tool. It is separate from the Cloudflare Studio Worker and is not part of the deployed site.
 
-Studio and Astro intentionally do not share runtime code. Keep the article path, section names (`life` / `tech`), and required frontmatter compatible across `src/content.ts` and `src/content.config.ts`.
+Studio and Astro intentionally do not share runtime code. Keep the article path and section names (`life` / `tech`) aligned across the legacy importer and D1 routes. Preserve the old publication flow during the migration window.
 
 ## Product and implementation constraints
 
@@ -44,7 +44,7 @@ Studio and Astro intentionally do not share runtime code. Keep the article path,
 - Never perform a live published-article deletion as a test. Use mocked APIs or an isolated test repository for destructive-flow verification.
 - Published Studio articles are written directly to the blog's configured main branch; no release branch or PR is created by the current Studio publish path. Deletion also writes a commit. Treat both as production-affecting operations requiring explicit in-app confirmation and SHA/concurrency checks.
 - Draft deletion removes the private Studio record and revisions. It does not remove an already published GitHub file. Published-file deletion removes the GitHub article and, when linked, the Studio record/history. Preserve this distinction in UI and documentation.
-- Do not change the two-repository arrangement, deployment model, auth boundary, content model, or publishing strategy without discussing the architecture change with the user first.
+- Do not change the two-repository arrangement, auth boundary, or production state without explicit authorization. V7 changes are authorized locally; production migration, D1/R2 access, cutover, and deployment are not.
 - Do not put Access credentials, GitHub private keys, installation tokens, or other secrets in source, docs, command output, or commits. Use Cloudflare Worker Secrets.
 - Keep the Studio private by default: Access is required, D1/R2 remain private, and production must fail closed when auth configuration is missing.
 - Preserve Markdown/MDX source when round-trip conversion could lose data. Keep IME composition safe and avoid aggressive autosaves that interrupt Chinese input.
