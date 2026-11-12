@@ -284,5 +284,5 @@ V7.0 架构迁移仍处于本地实现和隔离验证阶段。生产 D1/R2 未�
 - 当前生产切换阻塞仍是：生产数据副本尚未授权/完成并恢复验证；全量 Git/D1/R2 内容和引用对账未完成；生产 Pages 无 SSR 数据绑定；Studio D1 发布运行变量与生产 Access 状态未完整核对。依次处理这些数据和资源门槛并取得针对性确认前，不具备正式切换条件。
 - 支持 Node 24.22.2 下本轮完整验证：Studio `pnpm typecheck` 通过，`pnpm test` 4 个文件/16 项全通过，`pnpm build` 成功；仍有 955.18 kB 主 JS chunk 超过 500 kB 的 Vite 警告。博客 `pnpm check` 48 个文件、0 errors/warnings/hints，`pnpm build` Astro Cloudflare SSR 成功；构建输出提示 SESSION KV 绑定说明，但没有 Invalid binding 错误。两仓 `git diff --check` 通过。默认 Node 20.13.1 不受 Vite 支持，以上结果使用已安装的 Node 24.22.2 取得。
 - 本轮检查到博客 Pages 生产项目仍有 GitHub Provider；生产推送 main 有自动部署风险。博客正式 Pages 当前无 D1/R2/KV binding。Cloudflare OAuth 不能读取 Access Apps/Policies，因此 Access 状态仍未核实。未推送、部署或修改任何生产资源。
-- 目前仅移除被 Git 跟踪的 Studio `tsconfig.app.tsbuildinfo` 构建缓存跟踪状态，保留本机文件；两仓忽略规则已补入本地 DB/密钥/归档/导出清单/TS 缓存模式。生成 dist 与 Astro 缓存可在验证结束后删除；隔离 `.wrangler` 数据保留。所有 V7 迁移、业务代码、测试、备份/迁移脚本和必要运行手册继续保留。
-- 工作方向直接进入 V7 本地整理、测试、可审阅提交和明确的生产切换授权，不创建 V7.6 等额外阶段。本轮是否提交及对应 commit hash 以本节后续实际记录为准。
+- 目前仅移除被 Git 跟踪的 Studio `tsconfig.app.tsbuildinfo` 构建缓存跟踪状态，保留本机文件；两仓忽略规则已补入本地 DB/密钥/归档/导出清单/TS 缓存模式。验证生成的 `dist/` 与博客 `.astro/` 是已忽略的本地预览/构建输出，未提交；隔离 `.wrangler` 数据保留。所有 V7 迁移、业务代码、测试、备份/迁移脚本和必要运行手册继续保留。
+- 本轮提交（均仅本地，未推送）：Studio `2733c89`（D1 发布/迁移/媒体测试）、`8e7e5c8`（架构与切换文档）、`463a3c7`（忽略规则）；博客 `baf0359`（Astro SSR/D1）、`2090822`（运行状态文档与忽略规则）。两仓均基于原 `main`，本地各领先 `origin/main`，不触发远端 Pages 部署。
